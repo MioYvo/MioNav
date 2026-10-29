@@ -41,6 +41,7 @@ import com.amap.api.maps.model.LatLngBounds
 import com.amap.api.maps.model.PolylineOptions
 import io.mionav.geo.Gcj
 import io.mionav.geo.Point
+import io.mionav.geo.ShareLinkParser
 import io.mionav.geo.ShareTarget
 import io.mionav.nav.ShareResolver
 import io.mionav.hud.HudText
@@ -56,12 +57,18 @@ import kotlinx.coroutines.withContext
 class ConfirmActivity : ComponentActivity() {
 
     companion object {
-        const val EXTRA_SHORT_LINK = "short_link"
+        /** Amap hands us the whole share body; only the link inside it matters. */
+        fun takeSharedText(intent: Intent?, container: AppContainer) {
+            if (intent?.action != Intent.ACTION_SEND) return
+            val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+            ShareLinkParser.parse(text)?.let { container.pendingTarget = it }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as MioNavApp).container
+        takeSharedText(intent, container)
         val target = container.pendingTarget
 
         setContent {

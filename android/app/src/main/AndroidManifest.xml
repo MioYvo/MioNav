@@ -29,20 +29,22 @@
             </intent-filter>
         </activity>
 
+        <!--
+          The share target has to be an activity: a chooser only lists activities, so a
+          BroadcastReceiver with ACTION_SEND never appears in Amap's share sheet.
+          `text/*` covers the versions that send text/html instead of text/plain.
+        -->
         <activity
             android:name=".ConfirmActivity"
-            android:exported="false"
-            android:label="@string/confirm_title" />
-
-        <receiver
-            android:name=".ShareReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:label="@string/confirm_title">
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
+                <data android:mimeType="text/*" />
             </intent-filter>
-        </receiver>
+        </activity>
 
         <service
             android:name=".NavService"
