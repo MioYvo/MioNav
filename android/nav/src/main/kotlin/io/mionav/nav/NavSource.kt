@@ -10,6 +10,8 @@ data class RouteCandidate(
     val minutes: Int,
     val path: List<Point>,
     val tollYuan: Int? = null,
+    /** Where the route is slow, jammed or clear, in metres along [path]. Empty when unknown. */
+    val traffic: List<io.mionav.geo.TrafficSpan> = emptyList(),
 )
 
 data class RoutePlan(val candidates: List<RouteCandidate>, val selectedId: Int)

@@ -27,6 +27,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,10 +40,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -73,11 +76,18 @@ import kotlinx.coroutines.withContext
  */
 class ConfirmActivity : ComponentActivity() {
 
+    /** Held in state so a share arriving on top of an open screen re-plans. */
+    private val targetState = mutableStateOf<ShareTarget?>(null)
+
     companion object {
         /** Amap hands us the whole share body; only the link inside it matters. */
         fun takeSharedText(intent: Intent?, container: AppContainer) {
-            if (intent?.action != Intent.ACTION_SEND) return
-            val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+            // A share sheet hands over text; a tapped link hands over data.
+            val text = when (intent?.action) {
+                Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
+                Intent.ACTION_VIEW -> intent.dataString
+                else -> null
+            } ?: return
             container.lastShareText = text
             io.mionav.link.Diag.event("share.received", text)
             val parsed = ShareLinkParser.parse(text)
@@ -86,25 +96,72 @@ class ConfirmActivity : ComponentActivity() {
         }
     }
 
+    /** A second share while this screen is up replaces the destination instead of being ignored. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val container = (application as MioNavApp).container
+        container.pendingTarget = null
+        takeSharedText(intent, container)
+        readDebugExtras(intent, container)
+        targetState.value = container.pendingTarget
+    }
+
+    /** Debug hooks: a fixed start and a fixed destination, so the SDK path runs without a share. */
+    private fun readDebugExtras(intent: Intent?, container: AppContainer) {
+        if (!BuildConfig.DEBUG) return
+        intent?.getStringExtra("start")?.split(",")?.map { it.trim().toDoubleOrNull() }
+            ?.takeIf { it.size == 2 && it.all { v -> v != null } }
+            ?.let { (lat, lon) ->
+                (container.nav as? io.mionav.nav.AmapNavSource)?.debugStart =
+                    com.amap.api.maps.model.LatLng(lat!!, lon!!)
+                        .let { com.amap.api.navi.model.NaviLatLng(it.latitude, it.longitude) }
+                io.mionav.link.Diag.event("route.debugStart", "$lat,$lon")
+            }
+        // A destination without an Amap share, for looking at the map itself.
+        intent?.getStringExtra("dest")?.split(",")?.map { it.trim().toDoubleOrNull() }
+            ?.takeIf { it.size == 2 && it.all { v -> v != null } }
+            ?.let { (lat, lon) ->
+                container.pendingTarget =
+                    io.mionav.geo.ShareTarget.Coordinates(lat!!, lon!!, "演示目的地")
+            }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as MioNavApp).container
         takeSharedText(intent, container)
-        // Debug hook: plan from a fixed start so the SDK path can be exercised without sky.
-        if (BuildConfig.DEBUG) {
-            intent?.getStringExtra("start")?.split(",")?.map { it.trim().toDoubleOrNull() }
-                ?.takeIf { it.size == 2 && it.all { v -> v != null } }
-                ?.let { (lat, lon) ->
-                    (container.nav as? io.mionav.nav.AmapNavSource)?.debugStart =
-                        com.amap.api.maps.model.LatLng(lat!!, lon!!)
-                            .let { com.amap.api.navi.model.NaviLatLng(it.latitude, it.longitude) }
-                    io.mionav.link.Diag.event("route.debugStart", "$lat,$lon")
-                }
-        }
-        val target = container.pendingTarget
+        readDebugExtras(intent, container)
+        targetState.value = container.pendingTarget
 
         setContent {
-            MaterialTheme {
+            val prefs = remember {
+                getSharedPreferences("ui", android.content.Context.MODE_PRIVATE)
+            }
+            val systemNight = androidx.compose.foundation.isSystemInDarkTheme()
+            var forcedNight by remember {
+                mutableStateOf<Boolean?>(
+                    when (prefs.getString("night", "auto")) {
+                        "on" -> true
+                        "off" -> false
+                        else -> null
+                    },
+                )
+            }
+            val night = forcedNight ?: systemNight
+            // A bright sheet next to a dark map blinds the passenger, so the whole screen follows.
+            val colors = if (night) {
+                androidx.compose.material3.darkColorScheme()
+            } else {
+                androidx.compose.material3.lightColorScheme()
+            }
+            SideEffect {
+                window.statusBarColor = if (night) 0xFF12161A.toInt() else 0xFFF6F6F1.toInt()
+                androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+                    .isAppearanceLightStatusBars = !night
+            }
+            MaterialTheme(colorScheme = colors) {
+                val target = targetState.value
                 var plan by remember { mutableStateOf(container.plan) }
                 var focus by remember { mutableStateOf<Point?>(null) }
                 var selected by remember { mutableIntStateOf(plan?.selectedId ?: 0) }
@@ -141,17 +198,34 @@ class ConfirmActivity : ComponentActivity() {
                     loading = false
                 }
 
+                // A Surface, not a bare Column: it paints the background *and* hands the right
+                // content colour to every Text inside, which is why the error line was unreadable.
+                androidx.compose.material3.Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
                 Column(Modifier.fillMaxSize()) {
                     MapPanel(
                         candidates = plan?.candidates.orEmpty(),
                         focus = focus,
                         selectedId = selected,
                         destinationName = container.destinationName,
+                        night = night,
+                        onToggleNight = {
+                            val next = !night
+                            forcedNight = next
+                            prefs.edit().putString("night", if (next) "on" else "off").apply()
+                        },
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                     )
 
                     Text(
                         text = error ?: if (loading) "正在算路…" else "选择路线后开始导航",
+                        color = if (error != null) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -185,6 +259,7 @@ class ConfirmActivity : ComponentActivity() {
                             },
                         ) { Text("开始导航") }
                     }
+                }
                 }
             }
         }
@@ -222,13 +297,16 @@ private fun MapPanel(
     focus: Point?,
     selectedId: Int,
     destinationName: String?,
+    night: Boolean,
+    onToggleNight: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val mapView = remember { MapView(context) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val density = LocalDensity.current.density
-    val arrow = remember { arrowBitmap() }
+    val palette = remember(night) { MapPalette.of(night) }
+    val arrow = remember(palette) { arrowBitmap(palette) }
     var aMap by remember { mutableStateOf<AMap?>(null) }
 
     DisposableEffect(lifecycleOwner) {
@@ -254,16 +332,26 @@ private fun MapPanel(
             update = { view ->
                 val map: AMap = view.map ?: return@AndroidView
                 aMap = map
+                map.mapType = if (palette.night) AMap.MAP_TYPE_NIGHT else AMap.MAP_TYPE_NORMAL
                 // The SDK compass and zoom buttons sit inside the map; ours live outside it.
                 map.uiSettings.isCompassEnabled = false
                 map.uiSettings.isZoomControlsEnabled = false
                 val draw = {
-                    drawRoutes(map, candidates, selectedId, focus, destinationName, arrow, density)
+                    drawRoutes(
+                        map, candidates, selectedId, focus, destinationName, arrow, palette, density,
+                    )
                 }
                 // The first update can run before layout, when a bounds fit silently misses.
                 draw()
                 view.post { draw() }
             },
+        )
+
+        DayNightToggle(
+            night = night,
+            modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding()
+                .padding(top = 76.dp, end = 12.dp),
+            onToggle = onToggleNight,
         )
 
         CompassButton(
@@ -277,6 +365,26 @@ private fun MapPanel(
                     ),
                 )
             },
+        )
+    }
+}
+
+/** Sun or moon; tapping it switches the map between its day and night palettes. */
+@Composable
+private fun DayNightToggle(night: Boolean, modifier: Modifier = Modifier, onToggle: () -> Unit) {
+    Box(
+        modifier = modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(if (night) Color(0xFF1F2933) else Color.White)
+            .clickable(onClick = onToggle),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = if (night) "夜" else "日",
+            color = if (night) Color(0xFFE8EEF5) else Color(0xFF1F2933),
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Medium,
         )
     }
 }
@@ -318,20 +426,7 @@ private fun CompassButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
     }
 }
 
-/**
- * Fixed order, so "the second one" always means the same line.
- *
- * Morandi tones: muted enough to sit on a busy basemap, dark enough to stay readable on its white,
- * green and blue areas. The chosen route keeps full opacity and double width; the rest are dashed
- * and faded, so the eye goes to one line.
- */
-private val ROUTE_COLORS = intArrayOf(
-    0xFFB4544B.toInt(), // 陶土红，主选
-    0xFF6E7B8B.toInt(), // 青灰
-    0xFF9A8C7A.toInt(), // 灰驼
-    0xFF7A6E86.toInt(), // 灰紫
-    0xFF5F7A6B.toInt(), // 灰松绿
-)
+
 
 private fun drawRoutes(
     aMap: AMap,
@@ -339,39 +434,70 @@ private fun drawRoutes(
     selectedId: Int,
     focus: Point?,
     destinationName: String?,
-    arrow: BitmapDescriptor,
+    arrow: BitmapDescriptor?,
+    palette: MapPalette,
     density: Float,
 ) {
     aMap.clear()
 
-    candidates.forEachIndexed { index, candidate ->
-        val points = candidate.path.map { toGcj(it) }
-        if (points.size < 2) return@forEachIndexed
-        val color = ROUTE_COLORS[index % ROUTE_COLORS.size]
-        val selected = candidate.id == selectedId
+    // Z-order is the whole point of this pass: an unchosen route must never sit on top of the
+    // chosen one, and the chosen one is always the last thing painted.
+    val chosen = candidates.firstOrNull { it.id == selectedId } ?: candidates.firstOrNull()
+    // Only where an unchosen route actually leaves the chosen one. Drawing it in full either hides
+    // it under the chosen line or, worse, paints grey over it.
+    candidates.filter { it.id != selectedId }.forEach { candidate ->
+        if (chosen == null || chosen.path.size < 2) return@forEach
+        io.mionav.geo.RouteDiff.divergent(candidate.path, chosen.path).forEach { run ->
+            val points = run.map { toGcj(it) }
+            if (points.size < 2) return@forEach
+            aMap.addPolyline(
+                PolylineOptions().addAll(points).width(15f)
+                    .color(palette.alternativeCasing).zIndex(2f),
+            )
+            aMap.addPolyline(
+                PolylineOptions().addAll(points).width(11f)
+                    .color(palette.alternative).zIndex(3f),
+            )
+        }
+    }
 
-        if (selected) {
-            aMap.addPolyline(PolylineOptions().addAll(points).width(18f).color(color).zIndex(3f))
-            // Direction only matters on the line being ridden.
-            arrowsAlong(points).forEach { (position, bearing) ->
-                aMap.addMarker(
-                    MarkerOptions()
-                        .position(position)
-                        .icon(arrow)
-                        .anchor(0.5f, 0.5f)
-                        .setFlat(true)
-                        .zIndex(4f),
-                // Amap's rotate angle runs counter-clockwise from north, bearings run clockwise.
-                )?.setRotateAngle((360f - bearing) % 360f)
-            }
-        } else {
-            // Dimmed, so the chosen line is the loud one even though every hue is a red.
-            val faded = (color and 0x00FFFFFF) or 0xC4000000.toInt()
-            dashes(points).forEach { run ->
-                if (run.size >= 2) {
+    candidates.firstOrNull { it.id == selectedId }?.let { candidate ->
+        val points = candidate.path.map { toGcj(it) }
+        if (points.size >= 2) {
+            // Casing first, route on top: the line is carved out of the map instead of blending in.
+            aMap.addPolyline(
+                PolylineOptions().addAll(points).width(26f).color(palette.casing).zIndex(4f),
+            )
+            // Coloured by traffic, one polyline per status; unknown sections keep the route colour.
+            val slices = io.mionav.geo.TrafficSlicer.slice(candidate.path, candidate.traffic)
+            io.mionav.link.Diag.event(
+                "map.slices",
+                "spans=${candidate.traffic.size} by status=${slices.groupingBy { it.status }.eachCount()}",
+            )
+            slices.forEach { slice ->
+                val segment = slice.points.map { toGcj(it) }
+                if (segment.size >= 2) {
                     aMap.addPolyline(
-                        PolylineOptions().addAll(run).width(10f).color(faded).zIndex(2f),
+                        PolylineOptions()
+                            .addAll(segment)
+                            .width(16f)
+                            .color(palette.traffic(slice.status))
+                            .zIndex(5f),
                     )
+                }
+            }
+            arrow?.let { icon ->
+                arrowsAlong(points).forEach { (position, bearing) ->
+                    val marker = aMap.addMarker(
+                        MarkerOptions()
+                            .position(position)
+                            .icon(icon)
+                            .anchor(0.5f, 0.5f)
+                            .setFlat(true)
+                            .zIndex(6f),
+                    )
+                    // Amap's rotate angle runs counter-clockwise from north.
+                    marker?.setRotateAngle((360f - bearing) % 360f)
                 }
             }
         }
@@ -385,14 +511,14 @@ private fun drawRoutes(
             aMap.addMarker(
                 MarkerOptions()
                     .position(toGcj(start))
-                    .icon(labelBitmap("起点", 0xFF18A05A.toInt(), density))
+                    .icon(labelBitmap("起点", palette.startLabel, density))
                     .anchor(0.5f, 1f)
                     .zIndex(9f),
             )
             aMap.addMarker(
                 MarkerOptions()
                     .position(toGcj(end))
-                    .icon(labelBitmap(destinationName ?: "终点", 0xFFE8452C.toInt(), density))
+                    .icon(labelBitmap(destinationName ?: "终点", palette.endLabel, density))
                     .anchor(0.5f, 1f)
                     .zIndex(9f),
             )
@@ -402,7 +528,6 @@ private fun drawRoutes(
         }
     }
 
-    // No route yet: at least show the destination instead of Amap's default camera.
     if (candidates.isEmpty()) {
         focus?.let {
             aMap.moveCamera(CameraUpdateFactory.newLatLngZoom(toGcj(it), 13f))
@@ -458,7 +583,7 @@ private fun dashes(
 /** Arrow positions on the route, roughly one every [spacingM], with the local bearing. */
 private fun arrowsAlong(
     path: List<LatLng>,
-    spacingM: Double = 320.0,
+    spacingM: Double = 650.0,
     maxArrows: Int = 80,
 ): List<Pair<LatLng, Float>> {
     if (path.size < 2) return emptyList()
@@ -494,9 +619,9 @@ private fun bearing(a: LatLng, b: LatLng): Float {
     return ((Math.toDegrees(Math.atan2(y, x)) + 360.0) % 360.0).toFloat()
 }
 
-/** A chevron with a light outline, readable on both light and dark map areas. */
-private fun arrowBitmap(): BitmapDescriptor {
-    val size = 30
+/** A chevron with a contrasting outline, readable under sun and without glare at night. */
+private fun arrowBitmap(palette: MapPalette): BitmapDescriptor {
+    val size = 26
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = android.graphics.Canvas(bitmap)
     val chevron = android.graphics.Path().apply {
@@ -509,7 +634,7 @@ private fun arrowBitmap(): BitmapDescriptor {
     canvas.drawPath(
         chevron,
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.WHITE
+            color = palette.arrowCasing
             style = Paint.Style.STROKE
             strokeWidth = 4.5f
         },
@@ -517,7 +642,7 @@ private fun arrowBitmap(): BitmapDescriptor {
     canvas.drawPath(
         chevron,
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFF2C333A.toInt()
+            color = palette.arrow
             style = Paint.Style.FILL
         },
     )

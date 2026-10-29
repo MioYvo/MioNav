@@ -45,6 +45,17 @@
                 <data android:mimeType="text/plain" />
                 <data android:mimeType="text/*" />
             </intent-filter>
+            <!--
+              Tapping an Amap link, or any app opening one, should also land here: the same parser
+              and the same screen, without a detour through the share sheet.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="uri.amap.com" />
+                <data android:scheme="amapuri" />
+            </intent-filter>
         </activity>
 
         <service

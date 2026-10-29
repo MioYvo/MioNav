@@ -140,6 +140,7 @@ class AmapNavSource(
                 minutes = (path.allTime / 60).coerceAtLeast(1),
                 path = path.coordList.map { Gcj.gcjToWgs84(it.latitude, it.longitude) }
                     .map { (lat, lon) -> Point(lat, lon) },
+                traffic = trafficSpans(path.trafficStatuses),
             )
         }.sortedBy { it.minutes }
 
@@ -154,6 +155,22 @@ class AmapNavSource(
             )
         }
         return RoutePlan(candidates, candidates.first().id)
+    }
+
+    /** Amap reports traffic as ordered (status, length) pairs; turn them into metres along route. */
+    private fun trafficSpans(
+        statuses: List<com.amap.api.navi.model.AMapTrafficStatus>?,
+    ): List<io.mionav.geo.TrafficSpan> {
+        if (statuses.isNullOrEmpty()) return emptyList()
+        var cursor = 0
+        return statuses.map { status ->
+            val length = status.length.coerceAtLeast(0)
+            io.mionav.geo.TrafficSpan(
+                fromM = cursor,
+                toM = cursor + length,
+                status = io.mionav.geo.TrafficSpan.statusOf(status.status),
+            ).also { cursor += length }
+        }
     }
 
     private fun applyVehicle() {
