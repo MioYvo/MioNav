@@ -52,6 +52,34 @@ msgId u16 | index u8 | total u8 | body
 `Chunker.chunk(frame, maxPayload)` where `maxPayload = mtu - 3 - 11`.
 `Reassembler` holds partials for 5 s, rejects mixed totals, and reassembles out of order.
 
+## HELLO (pack handshake)
+
+Both directions share one layout. Empty strings mean "nothing to say": a watch without a pack sends
+no id and no version, a phone that will not serve sends no url.
+
+```
+u8  version      payload version, currently 1
+u8  flags        bit 0 = sender holds a pack
+u8  idLen
+u8  versionLen
+u32 packBytes    0 when unknown
+u32 packTiles    0 when unknown
+u8  shaLen
+u8  urlLen
+     id (idLen)          UTF-8, at most 63
+     version (versionLen) UTF-8, at most 31
+     sha256 (shaLen)      hex, at most 64
+     url (urlLen)         UTF-8, at most 127
+```
+
+The lengths are capped so the whole payload fits one frame next to an empty chunk header. The
+fields in the diagram are ordered as they appear on the wire; the four variable-length blobs follow
+the fixed part in that order. `HelloFrame` enforces the same limits when it encodes.
+
+The phone decides with `docs/design.md` §12.1: no local pack → serve; same pack → URL stays empty;
+different → serve the newer one. The watch treats an empty URL as "nothing to do" and keeps its
+current pack.
+
 ## NAV (48 bytes)
 
 | offset | type | field | unit |

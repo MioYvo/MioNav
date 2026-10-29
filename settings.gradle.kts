@@ -15,8 +15,8 @@ dependencyResolutionManagement {
     }
 }
 
-// Pure-JVM modules build anywhere. Android modules need SDK 34 + AGP.
-include(":core:proto", ":core:geo", ":core:hud")
+// Pure-JVM modules build anywhere. Android modules need SDK 35 + AGP.
+include(":core:proto", ":core:geo", ":core:hud", ":core:tilepack")
 
 val hasAndroidSdk = System.getenv("ANDROID_HOME") != null ||
     System.getenv("ANDROID_SDK_ROOT") != null ||

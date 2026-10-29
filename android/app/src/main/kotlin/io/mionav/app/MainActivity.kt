@@ -3,6 +3,7 @@ package io.mionav.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.OpenableColumns
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -25,11 +26,23 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import io.mionav.hud.HudText
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+
+    private val pickPack = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val picked = uri ?: return@registerForActivityResult
+        val container = (application as MioNavApp).container
+        lifecycleScope.launch(Dispatchers.IO) {
+            val name = contentResolver
+                .query(picked, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+            container.packs.import(picked, name).onSuccess { container.packHost.refresh() }
+        }
+    }
 
     private val requiredPermissions = buildList {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -80,6 +93,31 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.fillMaxWidth(),
                             onClick = { stopService(Intent(this@MainActivity, NavService::class.java)) },
                         ) { Text("停止") }
+
+                        val pack by container.packHost.state.collectAsState()
+                        Text("底图", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            pack.identity?.let {
+                                "${pack.name} · ${it.version} · ${it.tiles} 瓦片 · ${it.bytes / (1024 * 1024)} MB"
+                            } ?: "还没有底图包",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (pack.note.isNotEmpty()) {
+                            Text(pack.note, style = MaterialTheme.typography.bodySmall)
+                        }
+                        pack.url?.let { url -> Text(url, style = MaterialTheme.typography.bodySmall) }
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { pickPack.launch(arrayOf("*/*")) },
+                        ) { Text("导入底图包") }
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { container.packHost.shareNow() },
+                        ) { Text("共享底图") }
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { container.packHost.stop() },
+                        ) { Text("停止共享") }
                     }
                 }
             }

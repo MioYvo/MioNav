@@ -30,5 +30,6 @@ dependencies {
     implementation(project(":core:hud"))
     implementation(project(":core:geo"))
     implementation(project(":android:pack"))
+    implementation(project(":core:tilepack"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }

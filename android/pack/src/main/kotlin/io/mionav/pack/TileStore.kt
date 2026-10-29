@@ -32,6 +32,24 @@ class TileStore(path: String) : AutoCloseable {
     override fun close() = db.close()
 
     companion object {
+        /** How many tiles a file holds; used on import to fill in a missing manifest. */
+        fun count(path: String): Int =
+            SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+                db.rawQuery("SELECT count(*) FROM tiles", null).use { c ->
+                    if (c.moveToFirst()) c.getInt(0) else 0
+                }
+            }
+
+        /** MBTiles `metadata` rows: bounds, minzoom, maxzoom, version. */
+        fun metadataOf(path: String): Map<String, String> =
+            SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+                buildMap {
+                    db.rawQuery("SELECT name, value FROM metadata", null).use { c ->
+                        while (c.moveToNext()) put(c.getString(0), c.getString(1))
+                    }
+                }
+            }
+
         /** Called once after import: checks the three numbers the manifest promises. */
         fun verify(path: String, expectedTiles: Int): Boolean {
             SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READONLY).use { db ->

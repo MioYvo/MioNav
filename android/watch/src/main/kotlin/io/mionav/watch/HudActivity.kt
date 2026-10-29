@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
+import io.mionav.tilepack.PackIdentity
 import io.mionav.proto.NavFrame
 import io.mionav.proto.Scene
 import kotlinx.coroutines.CoroutineScope
@@ -26,6 +27,8 @@ class HudActivity : Activity() {
     private lateinit var hud: HudView
     private lateinit var heading: HeadingProvider
     private var tiles: TileSceneBuilder? = null
+    private var syncing = false
+    private var syncText: String? = null
 
     private var nav: NavFrame? = null
     private var scene: Scene? = null
@@ -45,6 +48,7 @@ class HudActivity : Activity() {
             if (file.exists()) tiles = TileSceneBuilder(io.mionav.pack.TileStore(file.absolutePath))
         }
         link = WatchLink(this)
+        link.localPack = { localPackIdentity() }
         hud = HudView(this)
         setContentView(hud)
         hud.setOnClickListener { hud.night = !hud.night; hud.invalidate() }
@@ -60,6 +64,9 @@ class HudActivity : Activity() {
                     hud.invalidate()
                 }
         }
+        scope.launch {
+            link.packUrl.collect { url -> url?.let { startSync(it) } }
+        }
         link.start()
     }
 
@@ -72,6 +79,53 @@ class HudActivity : Activity() {
     override fun onPause() {
         heading.stop()
         super.onPause()
+    }
+
+    private fun localPackIdentity(): PackIdentity? {
+        val sidecar = java.io.File(filesDir, "tiles.mbtiles.json")
+        val identity = io.mionav.tilepack.PackSidecar.read(sidecar) ?: return null
+        val file = java.io.File(filesDir, "tiles.mbtiles")
+        if (!file.isFile || file.length() != identity.bytes) return null
+        return identity
+    }
+
+    /** Pulls the pack the phone pointed at, then reopens tiles and re-announces what we hold. */
+    private fun startSync(url: String) {
+        if (syncing) return
+        syncing = true
+        syncText = "底图 0%"
+        hud.invalidate()
+        scope.launch {
+            val dest = java.io.File(filesDir, "tiles.mbtiles")
+            val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                io.mionav.tilepack.PackClient().sync(url, dest) { written, total ->
+                    val percent = if (total > 0) (written * 100 / total).toInt() else 0
+                    scope.launch {
+                        syncing = true
+                        syncText = "底图 $percent%"
+                        hud.invalidate()
+                    }
+                }
+            }
+            syncing = false
+            syncText = when (result) {
+                is io.mionav.tilepack.SyncResult.Updated -> {
+                    openTiles()
+                    link.announcePack()
+                    "底图已更新"
+                }
+                is io.mionav.tilepack.SyncResult.UpToDate -> "底图已是最新"
+                is io.mionav.tilepack.SyncResult.Failed -> result.reason
+            }
+            hud.invalidate()
+        }
+    }
+
+    private fun openTiles() {
+        tiles = runCatching {
+            val file = java.io.File(filesDir, "tiles.mbtiles")
+            if (file.exists()) TileSceneBuilder(io.mionav.pack.TileStore(file.absolutePath)) else null
+        }.getOrNull()
     }
 
     private fun buildLocal(frame: NavFrame): Scene? {
@@ -100,6 +154,17 @@ class HudActivity : Activity() {
             // A moving bike gives a usable compass; standing still the phone's course is steadier.
             val bearing = if (heading.moving) heading.headingDeg else frame.bearingDeg100 / 100f
             renderer.draw(canvas, width, height, frame, road, next, bearingDeg = bearing, scene = scene)
+            drawSync(canvas)
+        }
+
+        private fun drawSync(canvas: Canvas) {
+            val note = syncText ?: return
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = if (night) Color.WHITE else Color.BLACK
+                textSize = width * 0.055f
+                textAlign = android.graphics.Paint.Align.CENTER
+            }
+            canvas.drawText(note, width / 2f, height * 0.93f, paint)
         }
 
         private fun drawWaiting(canvas: Canvas) {
@@ -113,6 +178,7 @@ class HudActivity : Activity() {
                 if (link.connected.value) "等待路线" else "连接手机中",
                 width / 2f, height / 2f, paint,
             )
+            drawSync(canvas)
         }
     }
 }

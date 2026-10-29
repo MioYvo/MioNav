@@ -16,7 +16,9 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Build
 import android.os.ParcelUuid
+import io.mionav.tilepack.PackIdentity
 import io.mionav.proto.Frame
+import io.mionav.proto.HelloFrame
 import io.mionav.proto.MsgType
 import io.mionav.proto.NavFrame
 import io.mionav.proto.Reassembler
@@ -55,6 +57,13 @@ class WatchLink(context: Context) {
 
     private val _connected = MutableStateFlow(false)
     val connected: StateFlow<Boolean> = _connected
+
+    /** Set by the phone when it holds a different pack; null means there is nothing to fetch. */
+    private val _packUrl = MutableStateFlow<String?>(null)
+    val packUrl: StateFlow<String?> = _packUrl
+
+    /** Supplies the pack already on this watch, so the phone can decide whether to serve. */
+    var localPack: (() -> PackIdentity?)? = null
 
     private var gatt: BluetoothGatt? = null
     private var rx: BluetoothGattCharacteristic? = null
@@ -123,6 +132,7 @@ class WatchLink(context: Context) {
             val tx = service.getCharacteristic(TX) ?: return
             rx = service.getCharacteristic(RX)
             g.setCharacteristicNotification(tx, true)
+            announcePack()
             tx.getDescriptor(CCCD)?.let { descriptor ->
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     g.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
@@ -160,9 +170,44 @@ class WatchLink(context: Context) {
                 val entries = runCatching { io.mionav.proto.StringTable.decode(whole.payload) }.getOrNull() ?: return
                 _roads.value = _roads.value + entries.associate { it.id to it.text }
             }
-            MsgType.HELLO -> ack(whole.seq)
+            MsgType.HELLO -> {
+                _packUrl.value = HelloFrame.tryDecode(whole.payload)?.url?.takeIf { it.isNotEmpty() }
+                ack(whole.seq)
+            }
             else -> Unit
         }
+    }
+
+    /** Tells the phone which pack this watch holds; the answer decides whether a server opens. */
+    fun announcePack() {
+        val identity = localPack?.invoke()
+        send(
+            Frame(
+                MsgType.HELLO,
+                seq = nextSeq(),
+                payload = HelloFrame(
+                    flags = if (identity == null) 0 else HelloFrame.FLAG_HAS_PACK,
+                    packId = identity?.id.orEmpty(),
+                    packVersion = identity?.version.orEmpty(),
+                    packBytes = identity?.bytes ?: 0,
+                    packTiles = identity?.tiles ?: 0,
+                    packSha = identity?.sha256.orEmpty(),
+                ).encode(),
+            ),
+        )
+    }
+
+    private var seqCounter = 0
+
+    private fun nextSeq(): Int = (seqCounter++ and 0xFFFF)
+
+    @Suppress("DEPRECATION")
+    private fun send(frame: Frame) {
+        val g = gatt ?: return
+        val char = rx ?: return
+        char.value = frame.encode()
+        char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        g.writeCharacteristic(char)
     }
 
     @SuppressLint("MissingPermission")

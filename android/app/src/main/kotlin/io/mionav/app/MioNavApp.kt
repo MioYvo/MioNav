@@ -5,6 +5,9 @@ import android.content.Context
 import com.amap.api.maps.MapsInitializer
 import com.amap.api.navi.AMapNavi
 import io.mionav.link.LinkServer
+import io.mionav.tilepack.PackIdentity
+import io.mionav.proto.HelloFrame
+import io.mionav.proto.MsgType
 import io.mionav.nav.AmapNavSource
 import io.mionav.nav.FakeNavSource
 import io.mionav.nav.NavSource
@@ -48,4 +51,34 @@ class AppContainer(context: Context) {
 
     /** Share links carry GCJ-02 coordinates and bare POI ids; both need the Amap SDK. */
     val resolver = io.mionav.nav.ShareResolver(context)
+
+    val packs = PackStore(context)
+    val packHost = PackHost(packs)
+
+    private var helloSeq = 0
+
+    init {
+        packHost.refresh()
+        // The watch opens with which pack it holds; the answer decides whether a server opens at all.
+        link.onFrame = { frame ->
+            if (frame.type == MsgType.HELLO) {
+                val hello = HelloFrame.tryDecode(frame.payload)
+                val remote = hello?.takeIf { it.hasPack }?.let {
+                    PackIdentity(it.packId, it.packVersion, it.packBytes, it.packSha, it.packTiles)
+                }
+                val url = packHost.onWatchHello(remote)
+                if (link.connected) {
+                    link.send(
+                        MsgType.HELLO,
+                        helloSeq++ and 0xFFFF,
+                        HelloFrame(
+                            flags = if (url == null) 0 else HelloFrame.FLAG_SERVING,
+                            url = url.orEmpty(),
+                        ).encode(),
+                    )
+                }
+            }
+        }
+        link.onConnected = { packHost.refresh() }
+    }
 }

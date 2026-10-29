@@ -63,9 +63,11 @@
 
 **已验证**
 
-- 39 个 JVM 测试（协议、CRC、分片乱序、场景预算、坐标转换、简化和量化、图标映射、MVT 解码）
+- 69 个 JVM 测试（协议、CRC、分片乱序、场景预算、坐标转换、简化和量化、图标映射、MVT 解码、
+  包服务三组路由、续传与校验、握手判定、HELLO 编解码）
 - `:android:app:assembleDebug` 与 `:android:watch:assembleDebug` 构建通过
 - 高德 SDK 签名逐个用 `javap` 核对过
+- `tools/build-pack.sh verify`：干净的包返回 0，改一行的包返回 1 并指出 sha256 与瓦片数不符
 
 **未验证（都是真机项）**
 
@@ -74,6 +76,8 @@
 - 手表罗盘在发动机旁的漂移（`MOVING_KMH`、`MOUNT_OFFSET_DEG` 待调）
 - `TileSceneBuilder` 没有端上测试，只有 MVT decoder 单测
 - `AmapNaviView` 内拍照取证未测
+- planetiler 切片本身没跑通：辅助源（水域多边形等1.3 GB）在这台机器上只有 ~20 KB/s（见
+  `.scratch/m1-pack/issues/05-build-pack-script.md` 文末）
 
 ## 6. 环境与命令
 
@@ -101,10 +105,12 @@ tools/fetch-amap-sdk.sh
 
 ### M1 地图包可达（先做，纯软件、可离线验证）
 
-1. 手机侧只读 HTTP 服务：`GET /pack.mbtiles` + `HEAD` 给长度，走热点或局域网
-2. 手表侧下载器：落到 `filesDir/tiles.mbtiles`，整包校验和比对
-3. `tools/build-pack.sh`：planetiler 抽省域或 200 km 半径，默认 z12–14（z15 可选），产出 MBTiles + manifest
-4. **验收**：手表装好包后，关掉手机蓝牙，仍能画出 450 m 路网
+票据在 `.scratch/m1-pack/issues/`：01 模块与 HTTP 服务、02 下载器、03 手机导入与按需起服、
+04 手表握手同步、05 打包脚本，这五张已完成；06 是真机验收，等人上机。
+
+唯一放下的账：05 的「用马恩岛级别的小区域跑通」。脚本与 `verify` 都能跑，但 planetiler 要先拉
+1.3 GB 辅助源，这台机器 20 KB/s。换到快网络重跑 `tools/build-pack.sh build …` 即可，已下载的
+部分会自动续。
 
 ### M2 真机可跑（手工为主）
 

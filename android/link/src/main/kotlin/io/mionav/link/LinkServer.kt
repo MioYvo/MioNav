@@ -50,6 +50,10 @@ class LinkServer(context: Context) {
     var onFrame: ((Frame) -> Unit)? = null
     var onConnected: ((String) -> Unit)? = null
 
+    /** True while a watch is attached, so callers do not queue frames into the void. */
+    val connected: Boolean
+        get() = device != null
+
     @SuppressLint("MissingPermission")
     fun start() {
         val txChar = BluetoothGattCharacteristic(
