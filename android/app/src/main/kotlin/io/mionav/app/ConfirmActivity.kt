@@ -7,6 +7,7 @@ import android.graphics.Typeface
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -52,6 +53,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.amap.api.maps.AMap
 import com.amap.api.maps.CameraUpdateFactory
 import com.amap.api.maps.MapView
+import com.amap.api.maps.Projection
 import com.amap.api.maps.model.BitmapDescriptor
 import com.amap.api.maps.model.BitmapDescriptorFactory
 import com.amap.api.maps.model.CameraPosition
@@ -67,6 +69,7 @@ import io.mionav.nav.ShareResolver
 import io.mionav.hud.HudText
 import io.mionav.nav.RouteCandidate
 import io.mionav.nav.RoutePlan
+import kotlin.math.cos
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -267,24 +270,35 @@ class ConfirmActivity : ComponentActivity() {
 
     @Composable
     private fun RouteCard(candidate: RouteCandidate, selected: Boolean, onClick: () -> Unit) {
+        // No button inside: the card is the tap target, and its fill plus outline says which
+        // route is the one the map is showing.
+        val container = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+        }
+        val content = if (selected) {
+            MaterialTheme.colorScheme.onPrimaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        }
         Card(
+            onClick = onClick,
             modifier = Modifier.padding(vertical = 4.dp),
-            colors = androidx.compose.material3.CardDefaults.cardColors(
-                containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-            ),
+            colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = container),
+            border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
         ) {
-            Column(Modifier.padding(12.dp)) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                 Text(
                     "${HudText.distance(candidate.distanceM)} · ${HudText.duration(candidate.minutes)}",
                     style = MaterialTheme.typography.titleMedium,
+                    color = content,
                 )
                 Text(
                     candidate.label.ifBlank { "路线 ${candidate.id}" },
                     style = MaterialTheme.typography.bodySmall,
+                    color = content,
                 )
-                Button(onClick = onClick, modifier = Modifier.padding(top = 6.dp)) {
-                    Text(if (selected) "已选" else "选它")
-                }
             }
         }
     }
@@ -307,6 +321,12 @@ private fun MapPanel(
     val density = LocalDensity.current.density
     val palette = remember(night) { MapPalette.of(night) }
     val arrow = remember(palette) { arrowBitmap(palette) }
+    // Label bitmaps are rendered text: building them on every draw is pure waste.
+    val startIcon = remember(palette, density) { labelBitmap("起点", palette.startLabel, density) }
+    val endIcon = remember(palette, density, destinationName) {
+        labelBitmap(destinationName ?: "终点", palette.endLabel, density)
+    }
+    val drawn = remember { DrawBookkeeping() }
     var aMap by remember { mutableStateOf<AMap?>(null) }
 
     DisposableEffect(lifecycleOwner) {
@@ -336,14 +356,19 @@ private fun MapPanel(
                 // The SDK compass and zoom buttons sit inside the map; ours live outside it.
                 map.uiSettings.isCompassEnabled = false
                 map.uiSettings.isZoomControlsEnabled = false
-                val draw = {
-                    drawRoutes(
-                        map, candidates, selectedId, focus, destinationName, arrow, palette, density,
-                    )
-                }
+                // A different set of routes refits the camera; picking another one keeps it still,
+                // so one tap redraws the overlays once instead of twice with a second camera jump.
+                val fit = candidates !== drawn.lastCandidates
+                drawn.lastCandidates = candidates
+                fun draw(fitCamera: Boolean) = drawRoutes(
+                    map, candidates, selectedId, focus, startIcon, endIcon, arrow, palette, fitCamera,
+                )
+                draw(fit)
                 // The first update can run before layout, when a bounds fit silently misses.
-                draw()
-                view.post { draw() }
+                if (drawn.needsRelayout) {
+                    drawn.needsRelayout = false
+                    if (view.width == 0 || view.height == 0) view.post { draw(fitCamera = true) }
+                }
             },
         )
 
@@ -428,55 +453,99 @@ private fun CompassButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
 
 
 
+/**
+ * What the last draw saw. Plain fields on purpose: mutating them from the update block must not
+ * schedule another recomposition.
+ */
+private class DrawBookkeeping {
+    var lastCandidates: List<RouteCandidate>? = null
+    var needsRelayout = true
+}
+
 private fun drawRoutes(
     aMap: AMap,
     candidates: List<RouteCandidate>,
     selectedId: Int,
     focus: Point?,
-    destinationName: String?,
+    startIcon: BitmapDescriptor,
+    endIcon: BitmapDescriptor,
     arrow: BitmapDescriptor?,
     palette: MapPalette,
-    density: Float,
+    fit: Boolean,
 ) {
+    val startedNs = System.nanoTime()
+    var mark = startedNs
+    fun lap(): Long {
+        val now = System.nanoTime()
+        val ms = (now - mark) / 1_000_000
+        mark = now
+        return ms
+    }
+
     aMap.clear()
+    val tClear = lap()
 
     // Z-order is the whole point of this pass: an unchosen route must never sit on top of the
     // chosen one, and the chosen one is always the last thing painted.
     val chosen = candidates.firstOrNull { it.id == selectedId } ?: candidates.firstOrNull()
-    // Only where an unchosen route actually leaves the chosen one. Drawing it in full either hides
-    // it under the chosen line or, worse, paints grey over it.
-    candidates.filter { it.id != selectedId }.forEach { candidate ->
-        if (chosen == null || chosen.path.size < 2) return@forEach
-        io.mionav.geo.RouteDiff.divergent(candidate.path, chosen.path).forEach { run ->
-            val points = run.map { toGcj(it) }
-            if (points.size < 2) return@forEach
-            aMap.addPolyline(
-                PolylineOptions().addAll(points).width(15f)
-                    .color(palette.alternativeCasing).zIndex(2f),
-            )
-            aMap.addPolyline(
-                PolylineOptions().addAll(points).width(11f)
-                    .color(palette.alternative).zIndex(3f),
-            )
+
+    // Fit before drawing: arrow spacing follows the zoom the camera is about to land on, and
+    // a fixed 650 m turns a 170 km route into a solid band of chevrons once it is fitted.
+    if (fit) {
+        if (chosen != null && chosen.path.size >= 2) {
+            val builder = LatLngBounds.Builder()
+            chosen.path.forEach { builder.include(toGcj(it)) }
+            aMap.moveCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), 140))
+        } else {
+            focus?.let { aMap.moveCamera(CameraUpdateFactory.newLatLngZoom(toGcj(it), 13f)) }
         }
     }
+    val camera = aMap.cameraPosition
+    val projection = aMap.projection
+    val tFit = lap()
+    var arrowCount = 0
+    var drawnPoints = 0
+    var tSlices = 0L
+    var tRoute = 0L
+    var tArrows = 0L
+    // Only where an unchosen route actually leaves the chosen one. Drawing it in full either hides
+    // it under the chosen line or, worse, paints grey over it.
+    // Alternates are drawn whole, underneath: the chosen route's 26 px casing at z=4 hides the
+    // stretch they share, so diffing to find it was work the compositor already does for free.
+    candidates.filter { it.id != selectedId }.forEach { candidate ->
+        val points = visiblePath(candidate.path.map { toGcj(it) }, projection)
+        if (points.size < 2) return@forEach
+        aMap.addPolyline(
+            PolylineOptions().addAll(points).width(15f)
+                .color(palette.alternativeCasing).zIndex(2f),
+        )
+        aMap.addPolyline(
+            PolylineOptions().addAll(points).width(11f)
+                .color(palette.alternative).zIndex(3f),
+        )
+    }
+    val tAlternates = lap()
 
     candidates.firstOrNull { it.id == selectedId }?.let { candidate ->
-        val points = candidate.path.map { toGcj(it) }
+        val points = visiblePath(candidate.path.map { toGcj(it) }, projection)
+        drawnPoints += points.size
         if (points.size >= 2) {
             // Casing first, route on top: the line is carved out of the map instead of blending in.
             aMap.addPolyline(
                 PolylineOptions().addAll(points).width(26f).color(palette.casing).zIndex(4f),
             )
+            tRoute = lap()
             // Coloured by traffic, one polyline per status; unknown sections keep the route colour.
             val slices = io.mionav.geo.TrafficSlicer.slice(candidate.path, candidate.traffic)
+            tSlices = lap()
             io.mionav.link.Diag.event(
                 "map.slices",
                 "spans=${candidate.traffic.size} by status=${slices.groupingBy { it.status }.eachCount()}",
             )
             slices.forEach { slice ->
-                val segment = slice.points.map { toGcj(it) }
+                val segment = visiblePath(slice.points.map { toGcj(it) }, projection)
                 if (segment.size >= 2) {
+                    drawnPoints += segment.size
                     aMap.addPolyline(
                         PolylineOptions()
                             .addAll(segment)
@@ -487,7 +556,8 @@ private fun drawRoutes(
                 }
             }
             arrow?.let { icon ->
-                arrowsAlong(points).forEach { (position, bearing) ->
+                arrowsAlong(points, projection).forEach { (position, bearing) ->
+                    arrowCount++
                     val marker = aMap.addMarker(
                         MarkerOptions()
                             .position(position)
@@ -500,6 +570,7 @@ private fun drawRoutes(
                     marker?.setRotateAngle((360f - bearing) % 360f)
                 }
             }
+            tArrows = lap()
         }
     }
 
@@ -511,28 +582,28 @@ private fun drawRoutes(
             aMap.addMarker(
                 MarkerOptions()
                     .position(toGcj(start))
-                    .icon(labelBitmap("起点", palette.startLabel, density))
+                    .icon(startIcon)
                     .anchor(0.5f, 1f)
                     .zIndex(9f),
             )
             aMap.addMarker(
                 MarkerOptions()
                     .position(toGcj(end))
-                    .icon(labelBitmap(destinationName ?: "终点", palette.endLabel, density))
+                    .icon(endIcon)
                     .anchor(0.5f, 1f)
                     .zIndex(9f),
             )
-            val builder = LatLngBounds.Builder()
-            candidate.path.forEach { builder.include(toGcj(it)) }
-            aMap.moveCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), 140))
         }
     }
 
-    if (candidates.isEmpty()) {
-        focus?.let {
-            aMap.moveCamera(CameraUpdateFactory.newLatLngZoom(toGcj(it), 13f))
-        }
-    }
+    io.mionav.link.Diag.event(
+        "map.draw",
+        "ids=${candidates.map { it.id }} selected=$selectedId fit=$fit " +
+            "points=${candidates.sumOf { it.path.size }} drawn=$drawnPoints arrows=$arrowCount " +
+            "zoom=${camera.zoom} ms=${(System.nanoTime() - startedNs) / 1_000_000} " +
+            "phases(clear=$tClear fit=$tFit alt=$tAlternates slices=$tSlices " +
+            "route=$tRoute arrows=$tArrows)",
+    )
 }
 
 /** Chunks of the path that should be drawn, the rest stays empty: an honest dashed line. */
@@ -580,23 +651,65 @@ private fun dashes(
     return runs
 }
 
-/** Arrow positions on the route, roughly one every [spacingM], with the local bearing. */
+/**
+ * Drop the points the map cannot resolve. A 1500-point highway shape is thirty pixels of screen
+ * once the camera is fitted to it, and AMap pays for every one of them on the main thread.
+ */
+private fun visiblePath(
+    points: List<LatLng>,
+    projection: Projection,
+    minPx: Double = 1.5,
+): List<LatLng> {
+    if (points.size <= 2) return points
+    val minSq = minPx * minPx
+    val out = ArrayList<LatLng>(points.size)
+    out.add(points.first())
+    var last = projection.toScreenLocation(points.first())
+    for (i in 1 until points.lastIndex) {
+        val point = points[i]
+        val screen = projection.toScreenLocation(point)
+        val dx = (screen.x - last.x).toDouble()
+        val dy = (screen.y - last.y).toDouble()
+        if (dx * dx + dy * dy >= minSq) {
+            out.add(point)
+            last = screen
+        }
+    }
+    out.add(points.last())
+    return out
+}
+
+/**
+ * Arrow positions on the route, one every [gapPx] on screen and never closer than [minMetres].
+ *
+ * Screen distance, not ground distance: the map is fitted to the whole route before this runs, so
+ * 650 m is a couple of pixels on a 170 km route and the chevrons merge into a solid band. A zoom
+ * read back straight after `moveCamera` is stale by more than a level, so it cannot be trusted for
+ * the conversion either; the projection is what the next frame will actually paint with.
+ */
 private fun arrowsAlong(
     path: List<LatLng>,
-    spacingM: Double = 650.0,
+    projection: Projection,
+    gapPx: Double = 110.0,
+    minMetres: Double = 650.0,
     maxArrows: Int = 80,
 ): List<Pair<LatLng, Float>> {
     if (path.size < 2) return emptyList()
-    var cumulative = 0.0
-    var next = spacingM / 2
     val out = mutableListOf<Pair<LatLng, Float>>()
+    var last = projection.toScreenLocation(path.first())
+    var groundSince = 0.0
+    val gapSq = gapPx * gapPx
     for (i in 1 until path.size) {
         val from = path[i - 1]
         val to = path[i]
-        cumulative += metres(from, to)
-        if (cumulative >= next && out.size < maxArrows) {
+        groundSince += metres(from, to)
+        val screen = projection.toScreenLocation(to)
+        val dx = (screen.x - last.x).toDouble()
+        val dy = (screen.y - last.y).toDouble()
+        if (dx * dx + dy * dy >= gapSq && groundSince >= minMetres && out.size < maxArrows) {
             out.add(to to bearing(from, to))
-            next += spacingM
+            last = screen
+            groundSince = 0.0
         }
     }
     return out
