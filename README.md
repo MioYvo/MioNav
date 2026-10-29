@@ -8,6 +8,8 @@ Amap Navi SDK ──► NavState ──► BLE GATT ──►  Canvas HUD
 MBTiles (offline) ──────────► (later)        local tiles + palette
 ```
 
+New session? Read [`HANDOFF.md`](HANDOFF.md) first: decisions, verified vs unverified, next milestones.
+
 ## Status
 
 | Module | What it is | State |
