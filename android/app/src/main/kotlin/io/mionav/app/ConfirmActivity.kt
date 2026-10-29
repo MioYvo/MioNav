@@ -61,7 +61,11 @@ class ConfirmActivity : ComponentActivity() {
         fun takeSharedText(intent: Intent?, container: AppContainer) {
             if (intent?.action != Intent.ACTION_SEND) return
             val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
-            ShareLinkParser.parse(text)?.let { container.pendingTarget = it }
+            container.lastShareText = text
+            io.mionav.link.Diag.event("share.received", text)
+            val parsed = ShareLinkParser.parse(text)
+            io.mionav.link.Diag.event("share.parsed", parsed ?: "nothing")
+            parsed?.let { container.pendingTarget = it }
         }
     }
 
@@ -74,6 +78,7 @@ class ConfirmActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 var plan by remember { mutableStateOf(container.plan) }
+                var focus by remember { mutableStateOf<Point?>(null) }
                 var selected by remember { mutableIntStateOf(plan?.selectedId ?: 0) }
                 var error by remember { mutableStateOf<String?>(null) }
                 var loading by remember { mutableStateOf(true) }
@@ -86,14 +91,24 @@ class ConfirmActivity : ComponentActivity() {
                         val result = withContext(Dispatchers.IO) {
                             runCatching {
                                 when (val resolved = container.resolver.resolve(target)) {
-                                    is ShareResolver.Result.Resolved ->
+                                    is ShareResolver.Result.Resolved -> {
+                                        io.mionav.link.Diag.event("share.resolved", resolved.point)
+                                        focus = resolved.point
                                         container.nav.planRoute(resolved.point).also { container.destinationName = resolved.name }
+                                    }
                                     is ShareResolver.Result.Failed -> error(resolved.reason)
                                 }
                             }
                         }
-                        result.onSuccess { plan = it; selected = it.selectedId; container.plan = it }
-                            .onFailure { error = it.message }
+                        result.onSuccess {
+                            plan = it
+                            selected = it.selectedId
+                            container.plan = it
+                            io.mionav.link.Diag.event("route.planned", "${it.candidates.size} candidates")
+                        }.onFailure {
+                            io.mionav.link.Diag.event("route.failed", it.message ?: it.javaClass.simpleName)
+                            error = it.message
+                        }
                     }
                     loading = false
                 }
@@ -101,6 +116,7 @@ class ConfirmActivity : ComponentActivity() {
                 Column(Modifier.fillMaxSize()) {
                     AmapMap(
                         candidates = plan?.candidates.orEmpty(),
+                        focus = focus,
                         selectedId = selected,
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                     )
@@ -110,6 +126,16 @@ class ConfirmActivity : ComponentActivity() {
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                    // A failed parse is the one thing worth copying back verbatim.
+                    if (error != null) {
+                        container.lastShareText?.let { raw ->
+                            Text(
+                                text = raw,
+                                modifier = Modifier.padding(horizontal = 16.dp).weight(0.3f),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
 
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -162,7 +188,12 @@ class ConfirmActivity : ComponentActivity() {
 
 /** Thin MapView wrapper: lifecycle forwarding plus polyline drawing. */
 @Composable
-private fun AmapMap(candidates: List<RouteCandidate>, selectedId: Int, modifier: Modifier = Modifier) {
+private fun AmapMap(
+    candidates: List<RouteCandidate>,
+    focus: Point?,
+    selectedId: Int,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val mapView = remember { MapView(context) }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -205,6 +236,12 @@ private fun AmapMap(candidates: List<RouteCandidate>, selectedId: Int, modifier:
                     val builder = LatLngBounds.Builder()
                     candidate.path.forEach { builder.include(toGcj(it)) }
                     aMap.moveCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), 96))
+                }
+            }
+            // No route yet: at least show the destination instead of Amap's default camera.
+            if (candidates.isEmpty()) {
+                focus?.let {
+                    aMap.moveCamera(CameraUpdateFactory.newLatLngZoom(toGcj(it), 13f))
                 }
             }
         },

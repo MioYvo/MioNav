@@ -31,6 +31,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import io.mionav.geo.ShareLinkParser
 import io.mionav.hud.HudText
+import io.mionav.link.Diag
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -146,6 +147,17 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.fillMaxWidth(),
                             onClick = { container.packHost.stop() },
                         ) { Text("停止共享") }
+
+                        // Everything the agent needs to see is also in `adb logcat -s MioNav`.
+                        var events by remember { mutableStateOf(Diag.snapshot()) }
+                        Text("调试", style = MaterialTheme.typography.titleMedium)
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { events = Diag.snapshot() },
+                        ) { Text("刷新日志") }
+                        events.takeLast(10).forEach {
+                            Text(it, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
             }

@@ -27,6 +27,7 @@ dependencies {
     implementation(project(":core:proto"))
     implementation(project(":core:geo"))
     implementation(project(":core:hud"))
+    implementation(project(":android:link"))
 
     // Drop the Amap SDK into android/nav/libs (see libs/README.md). Not committed.
     // `api` so :android:app can use MapView too; the .so files go to app/src/main/jniLibs.

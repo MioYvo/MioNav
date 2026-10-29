@@ -46,6 +46,9 @@ class AppContainer(context: Context) {
     val link = LinkServer(context)
 
     var pendingTarget: io.mionav.geo.ShareTarget? = null
+
+    /** The share body as it arrived, shown when parsing fails so it can be reported verbatim. */
+    var lastShareText: String? = null
     var plan: RoutePlan? = null
     var destinationName: String? = null
 

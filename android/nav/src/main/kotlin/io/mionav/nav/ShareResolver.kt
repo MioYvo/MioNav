@@ -5,13 +5,12 @@ import com.amap.api.services.core.AMapException
 import com.amap.api.services.core.PoiItem
 import com.amap.api.services.poisearch.PoiSearch
 import io.mionav.geo.Gcj
+import io.mionav.geo.LinkFollower
 import io.mionav.geo.Point
 import io.mionav.geo.ShareLinkParser
 import io.mionav.geo.ShareTarget
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
-import java.net.HttpURLConnection
-import java.net.URL
 import kotlin.coroutines.resume
 
 /**
@@ -36,25 +35,23 @@ class ShareResolver(private val context: Context) {
     suspend fun resolve(target: ShareTarget): Result = when (target) {
         is ShareTarget.Coordinates -> resolved(target.lat, target.lon, target.name)
         is ShareTarget.Poi -> byId(target.poiId, target.name)
-        is ShareTarget.ShortLink -> {
-            val final = followRedirect(target.url) ?: return Result.Failed("short link did not redirect")
-            val inner = ShareLinkParser.parse(final) ?: return Result.Failed("redirect target unparsed: $final")
-            if (inner is ShareTarget.ShortLink) Result.Failed("redirect loop") else resolve(inner)
+        is ShareTarget.ShortLink -> when (val followed = follower.follow(target.url)) {
+            is LinkFollower.Result.Failed -> {
+                io.mionav.link.Diag.event("share.follow.failed", followed.reason)
+                Result.Failed(followed.reason)
+            }
+            is LinkFollower.Result.Final -> {
+                // The destination can sit in the final URL or, on a JS bounce page, in the body.
+                val inner = ShareLinkParser.parse(followed.url)
+                    ?: followed.body?.let { ShareLinkParser.parse(it) }
+                    ?: return Result.Failed("redirect target unparsed: ${followed.url}")
+                if (inner is ShareTarget.ShortLink) Result.Failed("redirect loop") else resolve(inner)
+            }
         }
     }
 
     /** `surl.amap.com/xyz` answers with a 302 to a full `uri.amap.com` URL. */
-    private fun followRedirect(link: String): String? = runCatching {
-        val conn = URL(link).openConnection() as HttpURLConnection
-        conn.instanceFollowRedirects = true
-        conn.connectTimeout = 5000
-        conn.readTimeout = 5000
-        conn.requestMethod = "GET"
-        conn.connect()
-        val finalUrl = conn.url.toString()
-        conn.disconnect()
-        finalUrl
-    }.getOrNull()
+    private val follower = LinkFollower(onHop = { io.mionav.link.Diag.event("share.hop", it) })
 
     private suspend fun byId(poiId: String, name: String?): Result = withTimeoutOrNull(6000) {
         suspendCancellableCoroutine { cont ->
