@@ -97,6 +97,10 @@ tools/fetch-amap-sdk.sh
 ```
 
 - Android SDK：`/home/mio/android-sdk`（platform 35、build-tools 35.0.0），`local.properties` 已指向它
+
+如果 `assembleDebug` 报 `The given file '/home/mio/pi-cwd/.../Le.class' is located outside the root
+directory`，那是 Gradle daemon 从另一个工作目录起的，与代码无关：`./gradlew --stop`，然后加
+`--no-daemon` 重跑。
 - 高德 SDK：AMap3DMap 11.3.100 / AMapNavi 11.3.100 / AMapSearch 9.8.1 / AMapLocation 11.3.101
 - Gradle 8.9、AGP 8.5.2、Kotlin 2.0.21、JVM 21
 - 代理曾让 Gradle 的 TLS 握手失败：**不要**给 Gradle 配 `systemProp.https.proxyHost`，直连可用
