@@ -36,8 +36,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.amap.api.maps.AMap
 import com.amap.api.maps.CameraUpdateFactory
 import com.amap.api.maps.MapView
+import com.amap.api.maps.model.BitmapDescriptorFactory
 import com.amap.api.maps.model.LatLng
 import com.amap.api.maps.model.LatLngBounds
+import com.amap.api.maps.model.MarkerOptions
 import com.amap.api.maps.model.PolylineOptions
 import io.mionav.geo.Gcj
 import io.mionav.geo.Point
@@ -73,6 +75,17 @@ class ConfirmActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val container = (application as MioNavApp).container
         takeSharedText(intent, container)
+        // Debug hook: plan from a fixed start so the SDK path can be exercised without sky.
+        if (BuildConfig.DEBUG) {
+            intent?.getStringExtra("start")?.split(",")?.map { it.trim().toDoubleOrNull() }
+                ?.takeIf { it.size == 2 && it.all { v -> v != null } }
+                ?.let { (lat, lon) ->
+                    (container.nav as? io.mionav.nav.AmapNavSource)?.debugStart =
+                        com.amap.api.maps.model.LatLng(lat!!, lon!!)
+                            .let { com.amap.api.navi.model.NaviLatLng(it.latitude, it.longitude) }
+                    io.mionav.link.Diag.event("route.debugStart", "$lat,$lon")
+                }
+        }
         val target = container.pendingTarget
 
         setContent {
@@ -219,33 +232,60 @@ private fun AmapMap(
         modifier = modifier.background(Color(0xFFF6F6F1)),
         update = { view ->
             val aMap: AMap = view.map ?: return@AndroidView
-            aMap.clear()
-            candidates.forEach { candidate ->
-                val points = candidate.path.map { toGcj(it) }
-                if (points.size < 2) return@forEach
-                val selected = candidate.id == selectedId
-                aMap.addPolyline(
-                    PolylineOptions()
-                        .addAll(points)
-                        .width(if (selected) 18f else 8f)
-                        .color(if (selected) 0xFFE8452C.toInt() else 0xFF9AA1AC.toInt()),
-                )
-            }
-            candidates.firstOrNull { it.id == selectedId }?.let { candidate ->
-                if (candidate.path.size >= 2) {
-                    val builder = LatLngBounds.Builder()
-                    candidate.path.forEach { builder.include(toGcj(it)) }
-                    aMap.moveCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), 96))
-                }
-            }
-            // No route yet: at least show the destination instead of Amap's default camera.
-            if (candidates.isEmpty()) {
-                focus?.let {
-                    aMap.moveCamera(CameraUpdateFactory.newLatLngZoom(toGcj(it), 13f))
-                }
-            }
+            // The first update can run before layout, when a bounds fit silently misses: draw now
+            // and again once the view has real dimensions.
+            drawRoutes(aMap, candidates, selectedId, focus)
+            view.post { drawRoutes(aMap, candidates, selectedId, focus) }
         },
     )
+}
+
+private fun drawRoutes(
+    aMap: AMap,
+    candidates: List<RouteCandidate>,
+    selectedId: Int,
+    focus: Point?,
+) {
+    aMap.clear()
+    candidates.forEach { candidate ->
+        val points = candidate.path.map { toGcj(it) }
+        if (points.size < 2) return@forEach
+        val selected = candidate.id == selectedId
+        aMap.addPolyline(
+            PolylineOptions()
+                .addAll(points)
+                .width(if (selected) 18f else 8f)
+                .color(if (selected) 0xFFE8452C.toInt() else 0xFF9AA1AC.toInt()),
+        )
+    }
+    candidates.firstOrNull { it.id == selectedId }?.let { candidate ->
+        if (candidate.path.size >= 2) {
+            // Endpoints, so the route reads like the one in Amap instead of a stray line.
+            val start = candidate.path.first()
+            val end = candidate.path.last()
+            aMap.addMarker(
+                MarkerOptions()
+                    .position(toGcj(start))
+                    .title("起点")
+                    .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN)),
+            )
+            aMap.addMarker(
+                MarkerOptions()
+                    .position(toGcj(end))
+                    .title("终点")
+                    .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED)),
+            )
+            val builder = LatLngBounds.Builder()
+            candidate.path.forEach { builder.include(toGcj(it)) }
+            aMap.moveCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), 96))
+        }
+    }
+    // No route yet: at least show the destination instead of Amap's default camera.
+    if (candidates.isEmpty()) {
+        focus?.let {
+            aMap.moveCamera(CameraUpdateFactory.newLatLngZoom(toGcj(it), 13f))
+        }
+    }
 }
 
 private fun toGcj(point: Point): LatLng {

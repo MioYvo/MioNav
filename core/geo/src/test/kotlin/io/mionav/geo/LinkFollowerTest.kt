@@ -116,4 +116,11 @@ class LinkFollowerTest {
             LinkFollower.absolute("https://surl.amap.com/abc", "/marker"),
         )
     }
+
+    @Test
+    fun prefersHttpsForRealHostsButNotForLoopback() {
+        assertEquals("https://m.amap.com/x", LinkFollower.preferHttps("http://m.amap.com/x"))
+        assertEquals("http://127.0.0.1:8080/x", LinkFollower.preferHttps("http://127.0.0.1:8080/x"))
+        assertEquals("https://uri.amap.com/y", LinkFollower.preferHttps("https://uri.amap.com/y"))
+    }
 }

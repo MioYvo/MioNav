@@ -51,11 +51,26 @@ class LinkFollower(
 
     companion object {
 
-        /** Resolves `Location` values that are absolute, scheme-relative, root-relative or bare. */
-        fun absolute(base: String, location: String): String = when {
-            location.startsWith("http://", true) || location.startsWith("https://", true) -> location
-            location.startsWith("//") -> base.substringBefore("://") + ":" + location
-            else -> runCatching { URI(base).resolve(location).toString() }.getOrDefault(location)
+        /**
+         * Resolves `Location` values that are absolute, scheme-relative, root-relative or bare.
+         * Plain `http` is upgraded to `https`: Amap serves both, and Android blocks cleartext.
+         */
+        fun absolute(base: String, location: String): String {
+            val resolved = when {
+                location.startsWith("http://", true) || location.startsWith("https://", true) -> location
+                location.startsWith("//") -> base.substringBefore("://") + ":" + location
+                else -> runCatching { URI(base).resolve(location).toString() }.getOrDefault(location)
+            }
+            return preferHttps(resolved)
+        }
+
+        /** Upgrades real hosts to https, but leaves loopback and bare IPs alone (tests live there). */
+        fun preferHttps(url: String): String {
+            if (!url.startsWith("http://", true)) return url
+            val host = url.substringAfter("://").substringBefore('/').substringBefore(':')
+            val numeric = host == "localhost" || host.contains("::") ||
+                Regex("^[0-9.]+$").matches(host)
+            return if (numeric) url else "https://" + url.substring(7)
         }
 
         /**
@@ -67,7 +82,7 @@ class LinkFollower(
             if (body.isNullOrEmpty()) return null
             val pattern = Regex("""https?://[^\s"'<>\\]+""")
             return pattern.findAll(body)
-                .map { it.value }
+                .map { preferHttps(it.value) }
                 .firstOrNull { candidate ->
                     when (ShareLinkParser.parse(candidate)) {
                         is ShareTarget.Coordinates, is ShareTarget.Poi -> true

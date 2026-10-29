@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Amap's share redirects still hand out plain-http links (m.amap.com). HTTPS is preferred in
+  LinkFollower; this keeps the fallback working for their domains and nobody else.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">amap.com</domain>
+        <domain includeSubdomains="true">autonavi.com</domain>
+    </domain-config>
+</network-security-config>

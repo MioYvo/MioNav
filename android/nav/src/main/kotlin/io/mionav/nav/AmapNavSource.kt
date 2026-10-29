@@ -64,8 +64,12 @@ class AmapNavSource(
                 "updateCameraInfo" -> onCameras(args?.getOrNull(0))
                 "onServiceAreaUpdate" -> onServiceAreas(args?.getOrNull(0))
                 "showLaneInfo" -> onLanes(args?.getOrNull(0))
-                "onCalculateRouteSuccess" -> routeResult?.complete(Unit)
+                "onCalculateRouteSuccess" -> {
+                    io.mionav.link.Diag.event("route.cb.success")
+                    routeResult?.complete(Unit)
+                }
                 "onCalculateRouteFailure" -> {
+                    io.mionav.link.Diag.event("route.cb.failure", args?.firstOrNull())
                     routeError = IllegalStateException("route failed: ${args?.firstOrNull()}")
                     routeResult?.complete(Unit)
                 }
@@ -93,6 +97,13 @@ class AmapNavSource(
         navi.startGPS()
         applyVehicle()
         routeError = null
+
+        // Route planning needs a start point, and the first fix can take a few seconds.
+        val start = debugStart ?: awaitFix()
+        io.mionav.link.Diag.event("route.start", "$start (debug=${debugStart != null})")
+        if (start == null) throw IllegalStateException(
+            "10 秒内没有定位。先到能看到天空的地方，或确认定位权限已给。",
+        )
         val done = CompletableDeferred<Unit>().also { routeResult = it }
 
         val end = destination.toGcj()
@@ -100,13 +111,19 @@ class AmapNavSource(
         // TODO(MIO-2): expose the five strategy flags in settings.
         val strategy = navi.strategyConvert(true, false, false, false, strategies > 1)
         val accepted = if (waypoints.isEmpty()) {
-            navi.calculateDriveRoute(listOf(naviStart()), listOf(end), null, strategy)
+            navi.calculateDriveRoute(listOf(start), listOf(end), null, strategy)
         } else {
-            navi.calculateDriveRoute(listOf(naviStart()), listOf(end), waypoints, strategy)
+            navi.calculateDriveRoute(listOf(start), listOf(end), waypoints, strategy)
         }
+        io.mionav.link.Diag.event("route.requested", "accepted=$accepted")
         check(accepted) { "calculateDriveRoute rejected the request" }
 
-        done.await()
+        // A missing callback would otherwise leave the screen on "正在算路" forever.
+        val answered = kotlinx.coroutines.withTimeoutOrNull(20_000) { done.await(); true } ?: false
+        if (!answered) {
+            io.mionav.link.Diag.event("route.timeout")
+            throw IllegalStateException("20 秒没有收到算路回调")
+        }
         routeError?.let { throw it }
 
         val paths = navi.naviPaths ?: error("no routes returned")
@@ -122,6 +139,15 @@ class AmapNavSource(
         }.sortedBy { it.minutes }
 
         check(candidates.isNotEmpty()) { "empty route list" }
+        candidates.firstOrNull()?.let { first ->
+            val lats = first.path.map { it.lat }
+            val lons = first.path.map { it.lon }
+            io.mionav.link.Diag.event(
+                "route.shape",
+                "points=${first.path.size} lat=${lats.minOrNull()}..${lats.maxOrNull()} " +
+                    "lon=${lons.minOrNull()}..${lons.maxOrNull()}",
+            )
+        }
         return RoutePlan(candidates, candidates.first().id)
     }
 
@@ -180,12 +206,28 @@ class AmapNavSource(
         return ((Math.toDegrees(kotlin.math.atan2(s, c)) + 360.0) % 360.0).toFloat()
     }
 
-    /** Amap reports the current fix as "lon,lat"; the route call wants a [NaviLatLng]. */
-    private fun naviStart(): NaviLatLng {
-        val raw = AMapNavi.getNaviLocation() ?: error("no GPS fix yet; wait for startGPS")
-        val parts = raw.split(",").map { it.trim().toDouble() }
-        require(parts.size == 2) { "unexpected AMapNavi location: $raw" }
+    /**
+     * Debug-only start point (GCJ-02), set from the confirm screen's `start` extra so a route can
+     * be planned indoors, where there is never a GPS fix. Null in normal use.
+     */
+    @Volatile
+    var debugStart: NaviLatLng? = null
+
+    /** The same fix, but in the shape `calculateDriveRoute` wants. */
+    private fun naviFix(): NaviLatLng? {
+        val raw = AMapNavi.getNaviLocation() ?: return null
+        val parts = raw.split(",").mapNotNull { it.trim().toDoubleOrNull() }
+        if (parts.size != 2) return null
         return NaviLatLng(parts[1], parts[0])
+    }
+
+    private suspend fun awaitFix(timeoutMs: Long = 10_000): NaviLatLng? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            naviFix()?.let { return it }
+            kotlinx.coroutines.delay(250)
+        }
+        return null
     }
 
     private fun selectRoute(routeId: Int) {

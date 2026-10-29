@@ -2,6 +2,7 @@ package io.mionav.geo
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -39,5 +40,19 @@ class ShareLinkParserTest {
         // lon/lat swapped: 120 as latitude is invalid for China.
         assertNull(ShareLinkParser.parse("https://uri.amap.com/marker?position=30.28,120.15"))
         assertTrue(ShareLinkParser.parse("https://uri.amap.com/marker?position=120.15,30.28") != null)
+    }
+
+    @Test
+    fun `double encoded name from a redirect wrapper decodes once more`() {
+        // Shape produced by surl.amap.com -> m.amap.com/callAPP: names arrive as %2525E4%2525B8…
+        val wrapped = "https://m.amap.com/callAPP?android=androidamap%3Fdlat%3D34.2415%26dlon" +
+            "%3D108.8799%26dname%3D%2525E4%2525B8%2525AD%2525E5%2525BB%2525BA"
+
+        val target = ShareLinkParser.parse(wrapped)
+
+        assertIs<ShareTarget.Coordinates>(target)
+        assertEquals("中建", target.name)
+        assertEquals(34.2415, target.lat, 0.0001)
+        assertEquals(108.8799, target.lon, 0.0001)
     }
 }

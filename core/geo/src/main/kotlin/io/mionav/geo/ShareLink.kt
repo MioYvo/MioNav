@@ -29,11 +29,9 @@ object ShareLinkParser {
 
     fun parse(raw: String): ShareTarget? {
         val link = url.find(raw)?.value ?: return null
-        val decoded = runCatching { java.net.URLDecoder.decode(link.replace("+", "%2B"), "UTF-8") }
-            .getOrDefault(link)
-        val label = name.find(decoded)?.groupValues?.get(1)?.let {
-            runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it)
-        }
+        val decoded = decode(link)
+        // Amap double-encodes names inside its redirect wrapper (`dname%3D%2525E4%2525B8…`).
+        val label = name.find(decoded)?.groupValues?.get(1)?.let { decode(it) }
 
         position.find(decoded)?.let { m ->
             val (lonV, latV) = m.destructured
@@ -53,6 +51,17 @@ object ShareLinkParser {
             return ShareTarget.ShortLink(link)
         }
         return null
+    }
+
+    /** Decodes up to three times: plain links need one pass, wrapped ones need two or three. */
+    private fun decode(text: String): String {
+        var current = text.replace("+", "%2B")
+        repeat(3) {
+            val next = runCatching { java.net.URLDecoder.decode(current, "UTF-8") }.getOrDefault(current)
+            if (next == current) return current
+            current = next
+        }
+        return current
     }
 
     private fun coords(latText: String, lonText: String, name: String?): ShareTarget? {
