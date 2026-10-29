@@ -78,9 +78,16 @@
 - 层过滤是最大的一根体积杠杆：`--layers transportation,water` 把浙江从 167 MB 压到 59 MB（35%），
   比 design §12.3 原先估的 40–60% 更狠，已在文档里改成实测值
 
-**未验证（都是真机项）**
+**手机侧已打通（2026-10-29，真机验证）**
 
-- 高德 key 的首次真算路（key 已申请并配在 `local.properties`，debug 与 release 两个 SHA1 都注册了）
+- 高德分享 → MioNav：`surl.amap.com` 短链三跳后解析坐标，算路出多条候选，地图画出整条路线
+  （起终点标记 + 布局后重新 fit）
+- 定位：先用 `AMapNavi` 的 GPS 解，8 秒没有就用 `AMapLocationClient` 的 last known（只信 10 分钟内的），
+  再没有才报可操作的错误
+- 调试：`adb logcat -s MioNav` 一条 tag 串起分享→跳转→解析→算路；`tools/device.sh`
+  封装 install/logcat/screencap/模拟分享；debug 包可用 `--es start "lat,lon"` 指定起点
+
+**未验证（都是真机项）**
 - BLE 连接、MTU 提升、断线重连
 - 手表罗盘在发动机旁的漂移（`MOVING_KMH`、`MOUNT_OFFSET_DEG` 待调）
 - `AmapNaviView` 内拍照取证未测

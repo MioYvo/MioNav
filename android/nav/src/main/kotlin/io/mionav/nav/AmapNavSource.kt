@@ -98,9 +98,13 @@ class AmapNavSource(
         applyVehicle()
         routeError = null
 
-        // Route planning needs a start point, and the first fix can take a few seconds.
-        val start = debugStart ?: awaitFix()
-        io.mionav.link.Diag.event("route.start", "$start (debug=${debugStart != null})")
+        // Route planning needs a start point. GPS can take a while (or never, indoors), so the
+        // network fix from the location SDK is the fallback before giving up.
+        val start = debugStart ?: awaitFix() ?: lastKnownFix()
+        io.mionav.link.Diag.event(
+            "route.start",
+            "$start (debug=${debugStart != null}, fallback=${debugStart == null && start != null})",
+        )
         if (start == null) throw IllegalStateException(
             "10 秒内没有定位。先到能看到天空的地方，或确认定位权限已给。",
         )
@@ -172,6 +176,11 @@ class AmapNavSource(
         _state.value = NavState()
     }
 
+    private companion object {
+        /** Older than this and the cached fix is a guess about a different city. */
+        const val MAX_FIX_AGE_MS = 10 * 60 * 1000L
+    }
+
     /** Amap reports the current fix as "lon,lat" in GCJ-02; the app wants WGS84. */
     private fun readFix(): Pair<Double, Double>? {
         val raw = AMapNavi.getNaviLocation() ?: return null
@@ -221,7 +230,24 @@ class AmapNavSource(
         return NaviLatLng(parts[1], parts[0])
     }
 
-    private suspend fun awaitFix(timeoutMs: Long = 10_000): NaviLatLng? {
+    /**
+     * AMapLocationClient answers from wifi/cell immediately, where a GPS fix can take minutes.
+     * Only a recent fix is trusted: a cached one can be from another city entirely.
+     */
+    private fun lastKnownFix(): NaviLatLng? = runCatching {
+        val client = com.amap.api.location.AMapLocationClient(context)
+        try {
+            val fix = client.lastKnownLocation ?: return null
+            val ageMs = System.currentTimeMillis() - fix.time
+            io.mionav.link.Diag.event("route.lastKnown", "age=${ageMs / 1000}s acc=${fix.accuracy}")
+            if (ageMs > MAX_FIX_AGE_MS) return null
+            NaviLatLng(fix.latitude, fix.longitude)
+        } finally {
+            runCatching { client.onDestroy() }
+        }
+    }.getOrNull()
+
+    private suspend fun awaitFix(timeoutMs: Long = 8_000): NaviLatLng? {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             naviFix()?.let { return it }
