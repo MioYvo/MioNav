@@ -86,6 +86,9 @@
   再没有才报可操作的错误
 - 调试：`adb logcat -s MioNav` 一条 tag 串起分享→跳转→解析→算路；`tools/device.sh`
   封装 install/logcat/screencap/模拟分享；debug 包可用 `--es start "lat,lon"` 指定起点
+- 确认页地图：多路线叠加（选中实线、其余虚线，颜色全用红色系按固定顺序），选中线每 ~320 m 一个
+  方向箭头（Amap 的 `setRotateAngle` 是逆时针，要传 `360 - bearing`），起终点带名字气泡，
+  右上角指南针按钮一键回到正北
 
 **未验证（都是真机项）**
 - BLE 连接、MTU 提升、断线重连
