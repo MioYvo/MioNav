@@ -5,6 +5,7 @@
 #   tools/device.sh install [APK]      # default: android/app/build/outputs/apk/debug/app-debug.apk
 #   tools/device.sh launch
 #   tools/device.sh share "<text>"     # simulates a share sheet hit, no Amap needed
+#   tools/device.sh confirm [START DEST] [WAIT]  # fresh launch of the confirm screen
 #   tools/device.sh paste "<text>"     # puts text on the clipboard for the paste button
 #   tools/device.sh shot [OUT.png]     # screenshot to a file (default /tmp/mionav-shot.png)
 #   tools/device.sh dump                # UI hierarchy XML
@@ -57,6 +58,27 @@ TXT
     "$ADB" shell am start -a android.intent.action.SEND -t text/plain \
       --es android.intent.extra.TEXT "$text" -n "$PKG/.ConfirmActivity" >/dev/null
     echo "sent: $text"
+    ;;
+  confirm)
+    # `-S` force-stops the app before it starts. A plain start reuses the running instance, the
+    # extras go to onNewIntent, and the screen shows 没有可用的分享目标 instead of the route.
+    need_device
+    start="${1:-30.2741,120.1551}"
+    dest="${2:-31.2304,121.4737}"
+    wait="${3:-14}"
+    launch() {
+      "$ADB" logcat -c
+      "$ADB" shell am start -S -W -n "$PKG/.ConfirmActivity" \
+        --es start "$start" --es dest "$dest" >/dev/null 2>&1 || true
+      sleep "$wait"
+    }
+    launch
+    for _ in 1 2; do
+      "$ADB" logcat -d 2>/dev/null | grep -q route.debugStart && break
+      echo "retry: the debug extras did not land" >&2
+      launch
+    done
+    "$ADB" logcat -d 2>/dev/null | grep -E "MioNav  :" | tail -14
     ;;
   paste)
     need_device
