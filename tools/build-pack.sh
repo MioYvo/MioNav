@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds an offline tile pack (MBTiles + manifest.json) or checks one.
 #
-#   tools/build-pack.sh build --pbf FILE --bbox W,S,E,N --out DIR [--zoom 12,14] [--id ID] [--name NAME]
+#   tools/build-pack.sh build --pbf FILE --bbox W,S,E,N --out DIR [--zoom 12,14] [--id ID] [--name NAME] [--layers transportation,water]
 #   tools/build-pack.sh verify DIR|FILE.mbtiles
 #   tools/build-pack.sh bbox --center LAT,LON --radius-km 200
 #
@@ -127,13 +127,14 @@ ensure_planetiler() {
 }
 
 cmd_build() {
-  local pbf="" bbox="" out="" zoom="12,14" id="" name=""
+  local pbf="" bbox="" out="" zoom="12,14" id="" name="" layers=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --pbf) pbf="$2"; shift 2 ;;
       --bbox) bbox="$2"; shift 2 ;;
       --out) out="$2"; shift 2 ;;
       --zoom) zoom="$2"; shift 2 ;;
+      --layers) layers="$2"; shift 2 ;;
       --id) id="$2"; shift 2 ;;
       --name) name="$2"; shift 2 ;;
       *) die "build: unknown argument $1" ;;
@@ -157,6 +158,13 @@ cmd_build() {
   trap 'rm -rf "${staging:-}"' EXIT
   staging="$(mktemp -d "$(dirname "$out")/.build-pack.XXXXXX")"
 
+  # The HUD draws roads and water only; dropping the rest is the biggest size lever there is.
+  local only_layers=()
+  if [[ -n "$layers" ]]; then
+    [[ "$layers" =~ ^[a-z_,]+$ ]] || die "bad --layers: $layers"
+    only_layers=(--only_layers="$layers")
+  fi
+
   local sources_dir="$CACHE/planetiler-sources"
   mkdir -p "$sources_dir"
 
@@ -171,6 +179,7 @@ cmd_build() {
     --minzoom="$min_zoom" \
     --maxzoom="$max_zoom" \
     --download \
+    "${only_layers[@]}" \
     --download_dir="$sources_dir" \
     --force \
     --output="$staging/region.mbtiles" >&2
@@ -194,7 +203,7 @@ cmd_build() {
     --arg id "$slug" --arg name "$label" --arg bbox "$bbox" \
     --argjson minZoom "$min_zoom" --argjson maxZoom "$max_zoom" \
     --arg version "$version" --argjson tiles "$tiles" --argjson bytes "$bytes" \
-    --arg sha "$sha" \
+    --arg sha "$sha" --arg layers "$layers" \
     '{
        id: $id,
        name: $name,
@@ -204,7 +213,8 @@ cmd_build() {
        tiles: $tiles,
        bytes: $bytes,
        sha256: $sha,
-       style: "motohud-6class-v1"
+       style: "motohud-6class-v1",
+       layers: ($layers | split(","))
      }' > "$staging/manifest.json"
 
   cmd_verify "$staging"

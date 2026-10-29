@@ -68,10 +68,15 @@
 - `:android:app:assembleDebug` 与 `:android:watch:assembleDebug` 构建通过
 - 高德 SDK 签名逐个用 `javap` 核对过
 - `tools/build-pack.sh verify`：干净的包返回 0，改一行的包返回 1 并指出 sha256 与瓦片数不符
-- 切片跑通了：马恩岛 z12–14 得 1317 片瓦片 / 5.26 MB，切片本身约 25 秒；这份包的一片能被
-  `Mvt.decode` 解出 `transportation` 图层（测试夹具 `core/geo/src/test/resources/mvt/`）
-- 实测包体积锚点：马恩岛约 1.55 万平方公里，取 1.5% 陆地覆盖，5 MB；省域尺度等比估算与
-  design §12.2 的 92 MB 不矛盾
+- 切片跑通了，实测（z12–14，`tools/build-pack.sh`）：
+  | 区域 | 瓦片数 | 全图层 | 只要道路与水面 |
+  | --- | --- | --- | --- |
+  | 马恩岛 | 1,317 | 5.0 MB | 1.1 MB |
+  | 浙江 | 52,890 | 167 MB | **59 MB** |
+  浙江切片 36 秒（`-Xmx8g`）。省域包只有 59 MB，手表存储不是问题
+- 这份包的一片能被 `Mvt.decode` 解出 `transportation` 图层（测试夹具 `core/geo/src/test/resources/mvt/`）
+- 层过滤是最大的一根体积杠杆：`--layers transportation,water` 把浙江从 167 MB 压到 59 MB（35%），
+  比 design §12.3 原先估的 40–60% 更狠，已在文档里改成实测值
 
 **未验证（都是真机项）**
 

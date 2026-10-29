@@ -40,3 +40,13 @@ Behind a proxy, planetiler's downloader is a plain JVM client, so:
 
 The tiles come out gzipped, as the MBTiles spec assumes; `Mvt.decode` unwraps that, and a real tile
 is now a test fixture in `core/geo/src/test/resources/mvt/`.
+
+**Sizes measured for real (z12–14):**
+
+| area | tiles | all layers | `--layers transportation,water` |
+| --- | --- | --- | --- |
+| Isle of Man | 1,317 | 5.0 MB | 1.1 MB |
+| Zhejiang | 52,890 | 167 MB | 59 MB |
+
+`--layers` is the biggest lever: the HUD draws six road classes and water, nothing else. Zhejiang
+sliced in 36 seconds with `-Xmx8g`.
