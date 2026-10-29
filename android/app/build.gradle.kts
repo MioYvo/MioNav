@@ -6,20 +6,24 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-/**
- * The key never lives in git: pass `-Pmionav.amapKey=…`, or drop `mionav.amapKey=…` into
- * `local.properties` (already ignored) and every build picks it up.
- */
-val amapKey: String = run {
-    val fromGradle = project.findProperty("mionav.amapKey") as String?
-    val fromLocal = rootProject.file("local.properties")
-        .takeIf { it.isFile }
-        ?.let { file ->
-            Properties().apply { file.inputStream().use { load(it) } }
-                .getProperty("mionav.amapKey")
-        }
-    (fromGradle ?: fromLocal ?: "").trim()
+/** Everything secret comes from `local.properties` (already ignored) or a `-P` flag. */
+val localProps: Properties = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.isFile }?.let { file ->
+        file.inputStream().use { load(it) }
+    }
 }
+
+fun secret(name: String): String? =
+    (project.findProperty(name) as String?) ?: localProps.getProperty(name)
+
+/**
+ * The Amap key never lives in git: pass `-Pmionav.amapKey=…`, or drop `mionav.amapKey=…` into
+ * `local.properties`.
+ */
+val amapKey: String = secret("mionav.amapKey")?.trim().orEmpty()
+
+/** Release signing, only when the keystore is configured; otherwise `assembleRelease` stays unsigned. */
+val releaseKeystore: String? = secret("mionav.releaseStore")
 
 android {
     namespace = "io.mionav.app"
@@ -39,6 +43,24 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = rootProject.file(releaseKeystore)
+                storePassword = secret("mionav.releaseStorePassword")
+                keyAlias = secret("mionav.releaseKeyAlias") ?: "mionav"
+                keyPassword = secret("mionav.releaseKeyPassword") ?: storePassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
+        }
     }
 
     compileOptions {

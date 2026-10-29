@@ -109,6 +109,10 @@ tools/fetch-amap-sdk.sh
 directory`，那是 Gradle daemon 从另一个工作目录起的，与代码无关：`./gradlew --stop`，然后加
 `--no-daemon` 重跑。
 - 高德 SDK：AMap3DMap 11.3.100 / AMapNavi 11.3.100 / AMapSearch 9.8.1 / AMapLocation 11.3.101
+- 正式签名库：`/home/mio/mionav-keys/mionav-release.jks`（别名 `mionav`，PKCS12，口令在同目录
+  `mionav-release.credentials`）。发布版 SHA1 `EB:5A:2B:ED:…:2A:38`。丢了就签不出可覆盖的包
+- 构建用的秘密都走 `local.properties`（已 gitignore）：`mionav.amapKey`、`mionav.releaseStore`、
+  `mionav.releaseStorePassword`、`mionav.releaseKeyAlias`、`mionav.releaseKeyPassword`
 - Gradle 8.9、AGP 8.5.2、Kotlin 2.0.21、JVM 21
 - 代理曾让 Gradle 的 TLS 握手失败：**不要**给 Gradle 配 `systemProp.https.proxyHost`，直连可用
 
