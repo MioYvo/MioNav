@@ -1,7 +1,7 @@
 # MioNav 交接文档
 
 写给下一个会话。这里只记录**结论、状态、下一步**；细节见 `docs/design.md` 与 `docs/protocol.md`。
-最后核对时间：2026-10-29，仓库 `/home/mio/Projects/MioNav`，HEAD `c5369ac`。
+最后核对时间：2026-10-29，仓库 `/home/mio/Projects/MioNav`，HEAD `0271123`。
 
 ---
 
@@ -36,16 +36,18 @@
 
 | 模块 | 文件 | 状态 |
 | --- | --- | --- |
-| `core/proto` | `Frame.kt` `NavFrame.kt` `Scene.kt` `Chunker.kt` `Crc16.kt` `Le.kt` `StringTable.kt` | 完成，16 测试 |
-| `core/geo` | `Gcj.kt` `Projection.kt`（含 Simplify）`ShareLink.kt` `Mvt.kt` | 完成，16 测试 |
+| `core/proto` | `Frame.kt` `NavFrame.kt` `Scene.kt` `Chunker.kt` `Crc16.kt` `Le.kt` `StringTable.kt` `HelloFrame.kt` | 完成，22 测试 |
+| `core/geo` | `Gcj.kt` `Projection.kt`（含 Simplify）`ShareLink.kt` `LinkFollower.kt` `Mvt.kt` `Traffic.kt` | 完成，32 测试 |
 | `core/hud` | `Maneuver.kt`（IconMapper）`HudText.kt` | 完成，7 测试 |
-| `android/nav` | `NavState.kt` `NavSource.kt` `AmapNavSource.kt` `FakeNavSource.kt` `ShareResolver.kt` | 编译通过，未真机验证 |
-| `android/link` | `LinkServer.kt`（GATT server + 广播 + 分片） | 编译通过，未真机验证 |
-| `android/pack` | `TileStore.kt`（读 MBTiles）`PackManifest.kt` | 只有读，**没有传输** |
+| `core/voice` | `VoicePlanner.kt` `Phrases.kt` `Announcement.kt` | 完成，8 测试 |
+| `core/tilepack` | `PackServer.kt` `PackClient.kt` `PackIdentity.kt` `PackNegotiation.kt` `PackSidecar.kt` `PackVerifier.kt` | 完成，24 测试 |
+| `android/nav` | `NavState.kt` `NavSource.kt` `AmapNavSource.kt` `FakeNavSource.kt` `ShareResolver.kt` | 算路/定位真机验证 |
+| `android/link` | `LinkServer.kt`（GATT server + 广播 + 分片） | 编译通过，**未上机** |
+| `android/pack` | `TileStore.kt`（读 MBTiles）`PackManifest.kt` | 导入与按需起服已接；同步在 `core/tilepack`，**未上机** |
 | `android/watch` | `HudActivity.kt` `HudRenderer.kt` `WatchLink.kt` `Palette.kt` `HeadingProvider.kt` `TileSceneBuilder.kt` | APK 1.4 MB，未上表 |
-| `android/app` | `MioNavApp.kt` `MainActivity.kt` `ShareReceiver.kt` `ConfirmActivity.kt` `NavService.kt` | APK 131 MB（高德 .so），未真机验证 |
+| `android/app` | `MioNavApp.kt` `MainActivity.kt` `ShareReceiver.kt` `ConfirmActivity.kt` `MapPalette.kt` `NavService.kt` `TtsAnnouncer.kt` | 分享→算路→选路→导航服务真机验证 |
 
-合计 **39 个 JVM 测试**，`./gradlew test` 全绿。
+合计 **93 个 JVM 测试**（proto 22 / geo 32 / hud 7 / voice 8 / tilepack 24），`./gradlew test` 全绿。
 
 ### 关键实现细节
 
@@ -57,13 +59,16 @@
 - 航向：`courseTo()` 用相邻定位算对地航向，圆形平滑（0.7 旧 + 0.3 新），移动小于 3 m 保持原值。
 - `HeadingProvider` 优先 `TYPE_ROTATION_VECTOR`，低于 `MOVING_KMH = 8` 冻结；`MOUNT_OFFSET_DEG` 是安装角度修正。
 - `TileSceneBuilder` 固定 z14、9 块瓦片、半径 450 m、移动 60 m 才重建、DP 容差 4 m、上限 300 条线 / 每条 14 点。
+- 选路页的三条渲染铁律：`AndroidView.update` 只画一遍（`post` 仅修首帧布局）、换选路线不重设镜头、
+  进 `addPolyline` 前按 1.5 px 去重（1542 点 → 约 400 点）。箭头间距用 `AMap.projection` 换成屏幕坐标算，
+  不能用 `cameraPosition.zoom`：`moveCamera` 之后立刻读能差一个层级以上。
 - MVT 解码器只处理图层、字符串标签、线几何（`type == 2`）。
 
 ## 5. 已验证 / 未验证
 
 **已验证**
 
-- 71 个 JVM 测试（协议、CRC、分片乱序、场景预算、坐标转换、简化和量化、图标映射、MVT 解码、
+- 93 个 JVM 测试（协议、CRC、分片乱序、场景预算、坐标转换、简化和量化、图标映射、MVT 解码、语音播报规划、
   包服务三组路由、续传与校验、握手判定、HELLO 编解码、gzip 瓦片、一片真实 planetiler 输出）
 - `:android:app:assembleDebug` 与 `:android:watch:assembleDebug` 构建通过
 - 高德 SDK 签名逐个用 `javap` 核对过
@@ -86,9 +91,16 @@
   再没有才报可操作的错误
 - 调试：`adb logcat -s MioNav` 一条 tag 串起分享→跳转→解析→算路；`tools/device.sh`
   封装 install/logcat/screencap/模拟分享；debug 包可用 `--es start "lat,lon"` 指定起点
-- 确认页地图：多路线叠加（选中实线、其余虚线，颜色全用红色系按固定顺序），选中线每 ~320 m 一个
-  方向箭头（Amap 的 `setRotateAngle` 是逆时针，要传 `360 - bearing`），起终点带名字气泡，
-  右上角指南针按钮一键回到正北
+- 冷启动一律 `tools/device.sh confirm [START DEST]`：内部 `am start -S` 先强制停止。普通 `am start`
+  会复用运行中的实例、参数走 `onNewIntent`，界面停在「没有可用的分享目标」；脚本在 debug 钩子
+  没落上时自动重试一次
+- 确认页地图：多路线叠加（选中 26 px 描边 + 路况分段上色，未选整条画在描边下面），方向箭头按
+  **屏幕距离** 110 px 排、下限 650 m（Amap 的 `setRotateAngle` 是逆时针，要传 `360 - bearing`），
+  起终点带名字气泡，右上角指南针按钮一键回到正北
+- 选路性能（真机实测，176 km / 3 条候选）：一次点击 ≈ 70 ms 主线程，重画一遍；改前是 150 ms × 2
+  加两次镜头跳。`MioNav: map.draw` 打印 `points/drawn/arrows/zoom/ms` 与
+  `phases(clear/fit/alt/slices/route/arrows)`，退步可量
+- 路线卡片就是按钮：没有「已选／选它」，选中态靠 `primaryContainer` 底色 + 2 dp 主色描边
 
 **未验证（都是真机项）**
 - BLE 连接、MTU 提升、断线重连

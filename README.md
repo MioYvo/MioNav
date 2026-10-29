@@ -14,17 +14,18 @@ New session? Read [`HANDOFF.md`](HANDOFF.md) first: decisions, verified vs unver
 
 | Module | What it is | State |
 | --- | --- | --- |
-| `core/proto` | wire format, NAV/SCENE/STR, chunking | done, 16 tests |
-| `core/geo` | GCJ-02 ↔ WGS84, simplify, quantise, share-link parser | done, 13 tests |
+| `core/proto` | wire format, NAV/SCENE/STR, HELLO, chunking | done, 22 tests |
+| `core/geo` | GCJ-02 ↔ WGS84, simplify, share-link parser, MVT, traffic spans | done, 32 tests |
 | `core/hud` | maneuver mapping, display strings | done, 7 tests |
-| `android/nav` | Amap adapter, share-link resolver (POI id + redirect), fake source | compiles |
+| `core/voice` | phrase planner for turn announcements | done, 8 tests |
+| `core/tilepack` | read-only pack server, resumable client, HELLO negotiation | done, 24 tests |
+| `android/nav` | Amap adapter, share-link resolver (POI id + redirect), fake source | on device |
 | `android/link` | GATT server, chunk queue, ACK | compiles |
-| `android/pack` | MBTiles reader, manifest | compiles |
-| `core/geo` (MVT) | vector-tile decoder for the scene builder | 3 tests |
+| `android/pack` | MBTiles reader, manifest, import, on-demand server | compiles |
 | `android/watch` | Canvas HUD, GATT client, compass, MBTiles→SCENE builder | APK 1.4 MB |
-| `android/app` | share receiver, confirm screen, foreground service | APK 131 MB (arm64, Amap .so) |
+| `android/app` | share receiver, confirm screen, map palettes, voice, foreground service | on device |
 
-39 JVM tests pass. Android modules compile only with SDK 35 and the Amap SDK in `android/nav/libs`.
+93 JVM tests pass. Android modules compile only with SDK 35 and the Amap SDK in `android/nav/libs`.
 
 ## Build
 
@@ -55,13 +56,16 @@ falls back to `FakeNavSource` so the watch and the link can be developed end to 
 ## Layout
 
 ```
-core/proto   Frame, NavFrame, Scene, StringTable, Chunker
-core/geo     Gcj, LocalProjection, Simplify, ShareLinkParser, Mvt
+core/proto   Frame, NavFrame, Scene, StringTable, Chunker, HelloFrame
+core/geo     Gcj, LocalProjection, Simplify, ShareLinkParser, Mvt, Traffic
 core/hud     ManeuverKind, IconMapper, HudText
+core/voice   VoicePlanner, Phrases, Announcement
+core/tilepack PackServer, PackClient, PackIdentity, PackNegotiation, PackVerifier
 android/nav  NavState, NavSource, AmapNavSource, ShareResolver, FakeNavSource
 android/link LinkServer (GATT)
 android/pack PackManifest, TileStore
-android/app  MioNavApp, ShareReceiver, MainActivity, ConfirmActivity, NavService
+android/app  MioNavApp, ShareReceiver, MainActivity, ConfirmActivity, MapPalette,
+             NavService, TtsAnnouncer
 android/watch HudActivity, HudRenderer, WatchLink, Palette, HeadingProvider, TileSceneBuilder
 docs/        design.md, protocol.md
 ```

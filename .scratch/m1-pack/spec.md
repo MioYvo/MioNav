@@ -4,6 +4,7 @@ Status: ready-for-agent
 Type: spec
 Feature: m1-pack
 Sources: `HANDOFF.md` §7 的 M1、`docs/design.md` §12 与 §14.4
+Note: 实现时模块名改成了 `:core:tilepack`（下文仍写 `core/pack`，指同一处代码）；01–05 已完成，06 待上机。
 
 ## Problem Statement
 
