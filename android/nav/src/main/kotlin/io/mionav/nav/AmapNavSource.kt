@@ -53,7 +53,8 @@ class AmapNavSource(
     private val navi: AMapNavi by lazy {
         AMapNavi.getInstance(context).apply {
             addAMapNaviListener(listenerProxy)
-            setUseInnerVoice(true)
+            // Our own TTS owns the audio focus policy; the SDK voice would ignore it.
+            setUseInnerVoice(false)
         }
     }
 

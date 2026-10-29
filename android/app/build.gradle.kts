@@ -77,6 +77,7 @@ dependencies {
     implementation(project(":core:proto"))
     implementation(project(":core:geo"))
     implementation(project(":core:hud"))
+    implementation(project(":core:voice"))
     implementation(project(":core:tilepack"))
     implementation(project(":android:nav"))
     implementation(project(":android:link"))

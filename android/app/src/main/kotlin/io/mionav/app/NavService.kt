@@ -57,6 +57,7 @@ class NavService : Service() {
 
         scope.launch {
             container.nav.state.collect { state ->
+                announce(state)
                 send(state)
                 if (state.active) updateNotification(state)
             }
@@ -144,4 +145,18 @@ class NavService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /** One a second is enough: the planner dedupes, the announcer queues. */
+    private fun announce(state: NavState) {
+        val input = io.mionav.voice.VoiceInput(
+            active = state.active,
+            recalculating = state.recalculating,
+            arrived = state.arrived,
+            maneuver = state.maneuver,
+            stepDistanceM = state.stepDistanceM,
+            nextRoad = state.nextRoad,
+        )
+        container.planner.onState(input, System.currentTimeMillis())
+            ?.let { container.voice.speak(it.text) }
+    }
 }

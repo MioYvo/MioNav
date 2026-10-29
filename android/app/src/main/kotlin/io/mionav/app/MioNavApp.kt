@@ -45,6 +45,10 @@ class AppContainer(context: Context) {
 
     val link = LinkServer(context)
 
+    /** Says the next instruction out loud; see [TtsAnnouncer] for the focus policy. */
+    val voice = TtsAnnouncer(context)
+    val planner = io.mionav.voice.VoicePlanner()
+
     var pendingTarget: io.mionav.geo.ShareTarget? = null
 
     /** The share body as it arrived, shown when parsing fails so it can be reported verbatim. */

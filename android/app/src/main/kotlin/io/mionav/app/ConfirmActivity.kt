@@ -319,15 +319,18 @@ private fun CompassButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
 }
 
 /**
- * Fixed order, so "the second one" always means the same line. All reds on purpose: the basemap
- * is white, green and blue, and those hues would disappear into it.
+ * Fixed order, so "the second one" always means the same line.
+ *
+ * Morandi tones: muted enough to sit on a busy basemap, dark enough to stay readable on its white,
+ * green and blue areas. The chosen route keeps full opacity and double width; the rest are dashed
+ * and faded, so the eye goes to one line.
  */
 private val ROUTE_COLORS = intArrayOf(
-    0xFFE8452C.toInt(), // 主选：亮红
-    0xFF9E1B1B.toInt(), // 深砖红
-    0xFFFF7A45.toInt(), // 橙红
-    0xFFC2185B.toInt(), // 玫红
-    0xFF7A1F1F.toInt(), // 暗枣红
+    0xFFB4544B.toInt(), // 陶土红，主选
+    0xFF6E7B8B.toInt(), // 青灰
+    0xFF9A8C7A.toInt(), // 灰驼
+    0xFF7A6E86.toInt(), // 灰紫
+    0xFF5F7A6B.toInt(), // 灰松绿
 )
 
 private fun drawRoutes(
@@ -363,11 +366,11 @@ private fun drawRoutes(
             }
         } else {
             // Dimmed, so the chosen line is the loud one even though every hue is a red.
-            val faded = (color and 0x00FFFFFF) or 0xA6000000.toInt()
+            val faded = (color and 0x00FFFFFF) or 0xC4000000.toInt()
             dashes(points).forEach { run ->
                 if (run.size >= 2) {
                     aMap.addPolyline(
-                        PolylineOptions().addAll(run).width(9f).color(faded).zIndex(2f),
+                        PolylineOptions().addAll(run).width(10f).color(faded).zIndex(2f),
                     )
                 }
             }

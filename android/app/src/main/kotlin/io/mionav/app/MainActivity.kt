@@ -89,6 +89,19 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.fillMaxWidth(),
                             onClick = { requestPermissions() },
                         ) { Text("授权") }
+                        var voiceOn by remember { mutableStateOf(container.voice.enabled) }
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = {
+                                container.voice.enabled = !container.voice.enabled
+                                voiceOn = container.voice.enabled
+                            },
+                        ) { Text(if (voiceOn) "语音播报：开" else "语音播报：关") }
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { container.voice.speak("前方 500 米右转，进入科技路") },
+                        ) { Text("试听语音") }
+
                         var shareNote by remember { mutableStateOf("") }
                         Button(
                             modifier = Modifier.fillMaxWidth(),
