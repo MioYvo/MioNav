@@ -36,7 +36,7 @@
 
 | 模块 | 文件 | 状态 |
 | --- | --- | --- |
-| `core/proto` | `Frame.kt` `NavFrame.kt` `Scene.kt` `Chunker.kt` `Crc16.kt` `Le.kt` `StringTable.kt` | 完成，14 测试 |
+| `core/proto` | `Frame.kt` `NavFrame.kt` `Scene.kt` `Chunker.kt` `Crc16.kt` `Le.kt` `StringTable.kt` | 完成，16 测试 |
 | `core/geo` | `Gcj.kt` `Projection.kt`（含 Simplify）`ShareLink.kt` `Mvt.kt` | 完成，16 测试 |
 | `core/hud` | `Maneuver.kt`（IconMapper）`HudText.kt` | 完成，7 测试 |
 | `android/nav` | `NavState.kt` `NavSource.kt` `AmapNavSource.kt` `FakeNavSource.kt` `ShareResolver.kt` | 编译通过，未真机验证 |
@@ -45,7 +45,7 @@
 | `android/watch` | `HudActivity.kt` `HudRenderer.kt` `WatchLink.kt` `Palette.kt` `HeadingProvider.kt` `TileSceneBuilder.kt` | APK 1.4 MB，未上表 |
 | `android/app` | `MioNavApp.kt` `MainActivity.kt` `ShareReceiver.kt` `ConfirmActivity.kt` `NavService.kt` | APK 131 MB（高德 .so），未真机验证 |
 
-合计 **37 个 JVM 测试**，`./gradlew test` 全绿。
+合计 **39 个 JVM 测试**，`./gradlew test` 全绿。
 
 ### 关键实现细节
 
@@ -63,7 +63,7 @@
 
 **已验证**
 
-- 37 个 JVM 测试（协议、CRC、分片乱序、场景预算、坐标转换、简化和量化、图标映射、MVT 解码）
+- 39 个 JVM 测试（协议、CRC、分片乱序、场景预算、坐标转换、简化和量化、图标映射、MVT 解码）
 - `:android:app:assembleDebug` 与 `:android:watch:assembleDebug` 构建通过
 - 高德 SDK 签名逐个用 `javap` 核对过
 
@@ -103,7 +103,7 @@ tools/fetch-amap-sdk.sh
 
 1. 手机侧只读 HTTP 服务：`GET /pack.mbtiles` + `HEAD` 给长度，走热点或局域网
 2. 手表侧下载器：落到 `filesDir/tiles.mbtiles`，整包校验和比对
-3. `tools/build-pack.sh`：planetiler 抽省域或 200 km 半径，只留 z12–z15，产出 MBTiles + manifest
+3. `tools/build-pack.sh`：planetiler 抽省域或 200 km 半径，默认 z12–14（z15 可选），产出 MBTiles + manifest
 4. **验收**：手表装好包后，关掉手机蓝牙，仍能画出 450 m 路网
 
 ### M2 真机可跑（手工为主）
@@ -137,8 +137,8 @@ tools/fetch-amap-sdk.sh
 
 | 项 | 推荐 |
 | --- | --- |
-| Issue tracker | 本地 markdown（无 git remote，票据进 `.scratch/<feature>/issues/`） |
-| 编辑文件 | 新建 `AGENTS.md`（pi 默认读它；目前根目录两者都没有） |
+| Issue tracker | 本地 markdown（票据进 `.scratch/<feature>/issues/`，已配置） |
+| 编辑文件 | `AGENTS.md`（已建，含 `## Agent skills` 三段） |
 | Triage 标签 | 保留默认五个：`needs-triage` `needs-info` `ready-for-agent` `ready-for-human` `wontfix` |
 | 领域文档 | 单上下文：根 `GLOSSARY.md` + `docs/adr/`（无 monorepo 信号） |
 

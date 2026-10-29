@@ -101,7 +101,7 @@ HELLO 帧的载荷现在只被 ACK，没人读。M1 把它变成双向的能力�
 手表现在没有 `INTERNET` 权限，且 Android 9 起默认禁明文。手表只需要连局域网，所以加 `INTERNET` 并开 `usesCleartextTraffic`，在 spec 之外用一行注释说明这是一次有意让步。
 
 **出包脚本不做图层裁剪**
-`tools/build-pack.sh` 用 planetiler 内置 `openmaptiles` profile，输入 `--pbf`、`--bbox`、`--zoom`，输出 `.mbtiles` 并生成 manifest。自定 profile 只留六类道路与水面的方案留到后面，代价是体积多 40–60%（`docs/design.md` §12.3 的实测锚点）。首轮实测用马恩岛级别的小区域，不下载 1.6 GB 全国 pbf。
+`tools/build-pack.sh` 用 planetiler 内置 `openmaptiles` profile，输入 `--pbf`、`--bbox`、`--zoom`，输出 `.mbtiles` 并生成 manifest。默认层级 z12–14，z15 在城市密集区可选，与 `docs/design.md` §12.8 一致。自定 profile 只留六类道路与水面的方案留到后面，代价是体积多 40–60%（`docs/design.md` §12.3 的实测锚点）。首轮实测用马恩岛级别的小区域，不下载 1.6 GB 全国 pbf。
 
 **验收**
 手表装好包后关掉手机蓝牙，`TileSceneBuilder` 仍能画出 450 m 半径的路网。
