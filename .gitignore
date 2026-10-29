@@ -1,0 +1,14 @@
+.gradle/
+build/
+*/build/
+android/*/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+
+# Amap SDK is never committed.
+android/app/src/main/jniLibs/
+android/nav/libs/*.jar
+android/nav/libs/*.so
+android/nav/libs/**/*.so

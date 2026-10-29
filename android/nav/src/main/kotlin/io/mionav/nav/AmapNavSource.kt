@@ -1,0 +1,257 @@
+package io.mionav.nav
+
+import android.content.Context
+import com.amap.api.navi.AMapNavi
+import com.amap.api.navi.AMapNaviListener
+import com.amap.api.navi.enums.NaviType
+import com.amap.api.navi.model.AMapCalcRouteResult
+import com.amap.api.navi.model.AMapCarInfo
+import com.amap.api.navi.model.AMapLaneInfo
+import com.amap.api.navi.model.AMapNaviCameraInfo
+import com.amap.api.navi.model.AMapServiceAreaInfo
+import com.amap.api.navi.model.NaviInfo
+import com.amap.api.navi.model.NaviLatLng
+import io.mionav.geo.Gcj
+import io.mionav.geo.Point
+import io.mionav.hud.IconMapper
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import java.lang.reflect.InvocationHandler
+import java.lang.reflect.Proxy
+import java.util.Calendar
+
+/**
+ * Amap adapter. Everything Amap-specific lives here, so the rest of the app only sees [NavState].
+ *
+ * The listener is a dynamic proxy on purpose: `AMapNaviListener` grows methods between SDK
+ * releases, and a direct implementation breaks on every bump. Only the callbacks we care about
+ * are dispatched; everything else returns null.
+ *
+ * Requires `AMapNavi.setApiKey` and the privacy calls to have run first (see `MioNavApp`).
+ * Amap works in GCJ-02; this class converts at the boundary.
+ */
+class AmapNavSource(
+    private val context: Context,
+    private val vehicle: VehicleProfile? = null,
+) : NavSource {
+
+    /**
+     * Amap vehicle description. `carType` "11" plus the engine displacement selects motorcycle
+     * routing, which is a **paid** Amap interface (`setCarInfo`); without the entitlement the
+     * service ignores the profile and routes as a car, so it is off by default.
+     */
+    data class VehicleProfile(val carType: String, val motorcycleCc: Int? = null)
+
+    private val _state = MutableStateFlow(NavState())
+    override val state: StateFlow<NavState> = _state
+
+    private var routeResult: CompletableDeferred<Unit>? = null
+    private var routeError: Throwable? = null
+    private var lastFix: Pair<Double, Double>? = null
+
+    private val navi: AMapNavi by lazy {
+        AMapNavi.getInstance(context).apply {
+            addAMapNaviListener(listenerProxy)
+            setUseInnerVoice(true)
+        }
+    }
+
+    private val listenerProxy: AMapNaviListener by lazy {
+        val handler = InvocationHandler { _, method, args ->
+            when (method.name) {
+                "onNaviInfoUpdate" -> onNaviInfo(args?.getOrNull(0) as? NaviInfo)
+                "updateCameraInfo" -> onCameras(args?.getOrNull(0))
+                "onServiceAreaUpdate" -> onServiceAreas(args?.getOrNull(0))
+                "showLaneInfo" -> onLanes(args?.getOrNull(0))
+                "onCalculateRouteSuccess" -> routeResult?.complete(Unit)
+                "onCalculateRouteFailure" -> {
+                    routeError = IllegalStateException("route failed: ${args?.firstOrNull()}")
+                    routeResult?.complete(Unit)
+                }
+                "onGpsSignalWeak" -> _state.value = _state.value.copy(gpsWeak = args?.getOrNull(0) == true)
+                "onReCalculateRouteForYaw", "onReCalculateRouteForTrafficJam" ->
+                    _state.value = _state.value.copy(recalculating = true)
+                "onStartNavi" -> _state.value = _state.value.copy(active = true, recalculating = false)
+                "onArriveDestination" -> _state.value = _state.value.copy(arrived = true, active = false)
+                "showCross" -> _state.value = _state.value.copy(hasJunctionView = args?.getOrNull(0) != null)
+                else -> null
+            }
+        }
+        Proxy.newProxyInstance(
+            javaClass.classLoader,
+            arrayOf(AMapNaviListener::class.java),
+            handler,
+        ) as AMapNaviListener
+    }
+
+    override suspend fun planRoute(
+        destination: Point,
+        via: List<Point>,
+        strategies: Int,
+    ): RoutePlan {
+        navi.startGPS()
+        applyVehicle()
+        routeError = null
+        val done = CompletableDeferred<Unit>().also { routeResult = it }
+
+        val end = destination.toGcj()
+        val waypoints = via.map { it.toGcj() }
+        // TODO(MIO-2): expose the five strategy flags in settings.
+        val strategy = navi.strategyConvert(true, false, false, false, strategies > 1)
+        val accepted = if (waypoints.isEmpty()) {
+            navi.calculateDriveRoute(listOf(naviStart()), listOf(end), null, strategy)
+        } else {
+            navi.calculateDriveRoute(listOf(naviStart()), listOf(end), waypoints, strategy)
+        }
+        check(accepted) { "calculateDriveRoute rejected the request" }
+
+        done.await()
+        routeError?.let { throw it }
+
+        val paths = navi.naviPaths ?: error("no routes returned")
+        val candidates = paths.map { (id, path) ->
+            RouteCandidate(
+                id = id,
+                label = path.labels.orEmpty(),
+                distanceM = path.allLength,
+                minutes = (path.allTime / 60).coerceAtLeast(1),
+                path = path.coordList.map { Gcj.gcjToWgs84(it.latitude, it.longitude) }
+                    .map { (lat, lon) -> Point(lat, lon) },
+            )
+        }.sortedBy { it.minutes }
+
+        check(candidates.isNotEmpty()) { "empty route list" }
+        return RoutePlan(candidates, candidates.first().id)
+    }
+
+    private fun applyVehicle() {
+        val profile = vehicle ?: return
+        val info = AMapCarInfo().apply {
+            carType = profile.carType
+            profile.motorcycleCc?.let { motorcycleCC = it }
+            isRestriction = true
+            isVehicleLoadSwitch = false
+        }
+        navi.carInfo = info
+    }
+
+    override suspend fun start(routeId: Int) {
+        selectRoute(routeId)
+        check(navi.startNavi(NaviType.GPS)) { "startNavi failed" }
+    }
+
+    override suspend fun stop() {
+        runCatching { navi.stopNavi() }
+        _state.value = NavState()
+    }
+
+    /** Amap reports the current fix as "lon,lat" in GCJ-02; the app wants WGS84. */
+    private fun readFix(): Pair<Double, Double>? {
+        val raw = AMapNavi.getNaviLocation() ?: return null
+        val parts = raw.split(",").mapNotNull { it.trim().toDoubleOrNull() }
+        if (parts.size != 2) return null
+        return Gcj.gcjToWgs84(parts[1], parts[0])
+    }
+
+    /**
+     * Course over ground, not a compass: the phone's magnetometer sits next to a bike mount and a
+     * speaker. Below walking pace the noise dominates, so the previous value is kept.
+     */
+    private fun courseTo(fix: Pair<Double, Double>): Float {
+        val prev = lastFix
+        lastFix = fix
+        if (prev == null) return _state.value.bearingDeg
+        val (lat1, lon1) = prev
+        val (lat2, lon2) = fix
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val y = kotlin.math.sin(dLon) * kotlin.math.cos(Math.toRadians(lat2))
+        val x = kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.sin(Math.toRadians(lat2)) -
+            kotlin.math.sin(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) * kotlin.math.cos(dLon)
+        val movedM = kotlin.math.hypot(dLat, dLon * kotlin.math.cos(Math.toRadians(lat1))) * 6_371_000.0
+        if (movedM < 3.0) return _state.value.bearingDeg
+        val degrees = (Math.toDegrees(kotlin.math.atan2(y, x)) + 360.0) % 360.0
+        // Circular smoothing keeps 359 -> 1 from swinging the map.
+        val prevRad = Math.toRadians(_state.value.bearingDeg.toDouble())
+        val rad = Math.toRadians(degrees)
+        val s = kotlin.math.sin(prevRad) * 0.7 + kotlin.math.sin(rad) * 0.3
+        val c = kotlin.math.cos(prevRad) * 0.7 + kotlin.math.cos(rad) * 0.3
+        return ((Math.toDegrees(kotlin.math.atan2(s, c)) + 360.0) % 360.0).toFloat()
+    }
+
+    /** Amap reports the current fix as "lon,lat"; the route call wants a [NaviLatLng]. */
+    private fun naviStart(): NaviLatLng {
+        val raw = AMapNavi.getNaviLocation() ?: error("no GPS fix yet; wait for startGPS")
+        val parts = raw.split(",").map { it.trim().toDouble() }
+        require(parts.size == 2) { "unexpected AMapNavi location: $raw" }
+        return NaviLatLng(parts[1], parts[0])
+    }
+
+    private fun selectRoute(routeId: Int) {
+        // Both names exist across SDK versions.
+        runCatching {
+            AMapNavi::class.java
+                .getMethod("selectMainPathID", Int::class.javaPrimitiveType)
+                .invoke(navi, routeId)
+        }.recoverCatching {
+            AMapNavi::class.java
+                .getMethod("selectRouteId", Int::class.javaPrimitiveType)
+                .invoke(navi, routeId)
+        }
+    }
+
+    private fun Point.toGcj(): NaviLatLng {
+        val (lat, lon) = Gcj.wgs84ToGcj(this.lat, this.lon)
+        return NaviLatLng(lat, lon)
+    }
+
+    private fun onNaviInfo(info: NaviInfo?) {
+        val i = info ?: return
+        val clock = Calendar.getInstance()
+        val fix = readFix()
+        val bearing = if (fix != null) courseTo(fix) else _state.value.bearingDeg
+        _state.value = _state.value.copy(
+            active = true,
+            maneuver = IconMapper.map(i.iconType),
+            iconType = i.iconType,
+            stepDistanceM = i.curStepRetainDistance,
+            remainDistanceM = i.pathRetainDistance,
+            remainMinutes = (i.pathRetainTime / 60).coerceAtLeast(0),
+            currentRoad = i.currentRoadName.orEmpty(),
+            speedKmh = i.currentSpeed,
+            etaEpochMin = clock.get(Calendar.HOUR_OF_DAY) * 60 + clock.get(Calendar.MINUTE) + i.pathRetainTime / 60,
+            lat = fix?.first ?: _state.value.lat,
+            lon = fix?.second ?: _state.value.lon,
+            bearingDeg = bearing,
+        )
+    }
+
+    private fun onCameras(raw: Any?) {
+        val list = (raw as? Array<*>)?.filterIsInstance<AMapNaviCameraInfo>().orEmpty()
+        val nearest = list.minByOrNull { it.cameraDistance } ?: return
+        _state.value = _state.value.copy(
+            cameraDistanceM = nearest.cameraDistance,
+            cameraType = nearest.cameraType,
+            limitKmh = nearest.cameraSpeed.coerceIn(0, 199),
+        )
+    }
+
+    private fun onServiceAreas(raw: Any?) {
+        val list = (raw as? Array<*>)?.filterIsInstance<AMapServiceAreaInfo>().orEmpty()
+        val nearest = list.minByOrNull { it.remainDist } ?: return
+        _state.value = _state.value.copy(serviceAreaDistanceM = nearest.remainDist)
+    }
+
+    private fun onLanes(raw: Any?) {
+        val list = (raw as? Array<*>)?.filterIsInstance<AMapLaneInfo>()?.take(8).orEmpty()
+        if (list.isEmpty()) return
+        var usable = 0
+        var recommended = 0
+        list.forEachIndexed { index, lane ->
+            usable = usable or (1 shl index)
+            if (lane.isRecommended) recommended = recommended or (1 shl index)
+        }
+        _state.value = _state.value.copy(lanes = LaneInfo(usable, recommended))
+    }
+}

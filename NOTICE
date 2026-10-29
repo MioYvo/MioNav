@@ -1,0 +1,14 @@
+MioNav
+Copyright 2026 MioYvo
+
+This product includes map data from OpenStreetMap.
+Map data (c) OpenStreetMap contributors, available under the Open Data
+Common Open Database License (ODbL) 1.0:
+https://www.openstreetmap.org/copyright
+
+Vector tiles are built with planetiler and the OpenMapTiles schema.
+
+The Amap (gaode) Android navigation SDK, its API key and its native
+libraries are proprietary. They are not part of this repository and are
+not redistributed. tools/fetch-amap-sdk.sh downloads them from Amap under
+Amap's own terms.

@@ -1,0 +1,29 @@
+rootProject.name = "MioNav"
+
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+        google()
+    }
+}
+
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+        google()
+    }
+}
+
+// Pure-JVM modules build anywhere. Android modules need SDK 34 + AGP.
+include(":core:proto", ":core:geo", ":core:hud")
+
+val hasAndroidSdk = System.getenv("ANDROID_HOME") != null ||
+    System.getenv("ANDROID_SDK_ROOT") != null ||
+    file("local.properties").exists()
+
+if (hasAndroidSdk) {
+    include(":android:app", ":android:watch", ":android:nav", ":android:link", ":android:pack")
+} else {
+    logger.lifecycle("MioNav: no Android SDK found, skipping :android:* modules")
+}
