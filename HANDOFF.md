@@ -80,7 +80,7 @@
 
 **未验证（都是真机项）**
 
-- 高德 key 注册与首次算路（key 需要包名 `io.mionav.app` + debug SHA1）
+- 高德 key 的首次真算路（key 已申请并配在 `local.properties`，debug 与 release 两个 SHA1 都注册了）
 - BLE 连接、MTU 提升、断线重连
 - 手表罗盘在发动机旁的漂移（`MOVING_KMH`、`MOUNT_OFFSET_DEG` 待调）
 - `AmapNaviView` 内拍照取证未测
