@@ -1,10 +1,25 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     kotlin("android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val amapKey: String = (project.findProperty("mionav.amapKey") as String?) ?: ""
+/**
+ * The key never lives in git: pass `-Pmionav.amapKey=…`, or drop `mionav.amapKey=…` into
+ * `local.properties` (already ignored) and every build picks it up.
+ */
+val amapKey: String = run {
+    val fromGradle = project.findProperty("mionav.amapKey") as String?
+    val fromLocal = rootProject.file("local.properties")
+        .takeIf { it.isFile }
+        ?.let { file ->
+            Properties().apply { file.inputStream().use { load(it) } }
+                .getProperty("mionav.amapKey")
+        }
+    (fromGradle ?: fromLocal ?: "").trim()
+}
 
 android {
     namespace = "io.mionav.app"
