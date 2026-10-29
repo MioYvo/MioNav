@@ -10,7 +10,7 @@
 - [x] manifest 的 bbox、zoom、瓦片数、字节数、sha256 与文件实际一致
 - [x] `--verify` 对被改过的文件返回非零，并指出是哪一项不符
 - [x] 默认层级 z12–14，`--zoom` 可以覆盖
-- [ ] 用马恩岛级别的小区域跑通，不改动机器上的全局配置（本机下载辅助源只有 ~20 KB/s，跑到一半超时；见文末）
+- [x] 用马恩岛级别的小区域跑通，不改动机器上的全局配置
 - [x] 中途失败时保留上一次成功的产物
 
 ## Implementation notes
@@ -29,8 +29,14 @@ passes, so a failed run leaves the previous pack alone.
 `verify` is offline: it compares `bytes` and `sha256` with `stat`/`sha256sum`, and the tile count
 with `sqlite3` when that is installed.
 
-**Known gap:** on this machine the water-polygons download ran at ~20 KB/s, so the end-to-end
-Monaco/Isle-of-Man run was cut short at 15 minutes with only 16 of ~800 MB fetched. Everything
-downstream of the download (manifest write, `verify`, atomic swap) is exercised by `verify` tests
-and by a synthetic mbtiles; the slice itself is unverified. Re-run `build` on a faster link to close
-it — the partial download is kept and resumed.
+**First end-to-end run (Isle of Man, z12–14):** 6116105-byte extract, bbox
+`-4.90,54.02,-4.28,54.43`, output 1317 tiles / 5263360 bytes / sha256 `248041c3…`. Slicing took about
+25 seconds; the cost was entirely in the 931 MB water-polygons download, which planetiler fetched at
+~20 KB/s while plain `curl` of the same URL managed 4 MB/s. Pull the auxiliary files with `curl -C -`
+into the cache first, then let `build` find them.
+
+Behind a proxy, planetiler's downloader is a plain JVM client, so:
+`PLANETILER_JAVA_OPTS="-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7890"`.
+
+The tiles come out gzipped, as the MBTiles spec assumes; `Mvt.decode` unwraps that, and a real tile
+is now a test fixture in `core/geo/src/test/resources/mvt/`.

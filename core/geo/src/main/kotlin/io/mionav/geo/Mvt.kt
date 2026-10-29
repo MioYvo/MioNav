@@ -19,8 +19,12 @@ object Mvt {
         val geometry: List<List<Pair<Int, Int>>>,
     )
 
+    /**
+     * MBTiles stores vector tiles gzipped (the spec assumes it), so the decoder unwraps that first.
+     * Planetiler's output is gzipped; a hand-built fixture is not; both arrive here.
+     */
     fun decode(bytes: ByteArray): Tile {
-        val p = Proto(bytes)
+        val p = Proto(if (isGzip(bytes)) gunzip(bytes) else bytes)
         val layers = mutableListOf<Layer>()
         while (!p.done()) {
             val (field, wire) = p.tag()
@@ -33,6 +37,12 @@ object Mvt {
     }
 
     private class RawFeature(val type: Int, val tagIndexes: IntArray, val geometry: List<List<Pair<Int, Int>>>)
+
+    private fun isGzip(bytes: ByteArray): Boolean =
+        bytes.size >= 2 && bytes[0] == 0x1f.toByte() && bytes[1] == 0x8b.toByte()
+
+    private fun gunzip(bytes: ByteArray): ByteArray =
+        java.util.zip.GZIPInputStream(bytes.inputStream()).use { it.readBytes() }
 
     private fun layer(bytes: ByteArray): Layer {
         val p = Proto(bytes)

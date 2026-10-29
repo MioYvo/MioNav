@@ -6,6 +6,9 @@
 #   tools/build-pack.sh bbox --center LAT,LON --radius-km 200
 #
 # Planetiler does the slicing; this script owns the manifest, the atomic swap and the checks.
+#
+# Behind a proxy: PLANETILER_JAVA_OPTS="-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7890"
+#   (planetiler's downloader is a plain JVM HTTP client, so it reads those system properties).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -157,9 +160,11 @@ cmd_build() {
   local sources_dir="$CACHE/planetiler-sources"
   mkdir -p "$sources_dir"
 
+  local java_opts="${PLANETILER_JAVA_OPTS:-}"
   note "slicing $pbf ($bbox, z$min_zoom–$max_zoom) into $staging/region.mbtiles"
-  note "sources cached in $sources_dir (first run downloads ~1.2 GB)"
-  java -Xmx2g -jar "$PLANETILER_JAR" \
+  note "sources cached in $sources_dir (first run downloads ~1.3 GB)"
+  # shellcheck disable=SC2086
+  java -Xmx2g ${java_opts} -jar "$PLANETILER_JAR" \
     --profile=openmaptiles \
     --osm-path="$pbf" \
     --bounds="$bbox" \

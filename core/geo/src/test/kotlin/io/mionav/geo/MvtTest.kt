@@ -48,6 +48,39 @@ class MvtTest {
     }
 
     @Test
+    fun decodesGzippedTiles() {
+        val raw = tile()
+        val gz = java.io.ByteArrayOutputStream().also { out ->
+            java.util.zip.GZIPOutputStream(out).use { it.write(raw) }
+        }.toByteArray()
+        assertEquals(0x1f.toByte(), gz[0])
+
+        val plain = Mvt.decode(raw)
+        val zipped = Mvt.decode(gz)
+        assertEquals(plain.layers.map { it.name }, zipped.layers.map { it.name })
+        assertEquals(
+            plain.layers.single().features.single().geometry,
+            zipped.layers.single().features.single().geometry,
+        )
+    }
+
+    /**
+     * A real tile cut by planetiler's openmaptiles profile from Isle of Man data, Douglas at z14.
+     * Guards the one thing the hand-built fixtures cannot: that production output decodes.
+     */
+    @Test
+    fun decodesARealPlanetilerTile() {
+        val bytes = javaClass.getResourceAsStream("/mvt/iom-z14-7980-11137.mvt.gz")!!.readBytes()
+        assertEquals(0x1f.toByte(), bytes[0], "fixture should stay gzipped, like an mbtiles row")
+        val tile = Mvt.decode(bytes)
+        assertTrue(tile.layers.isNotEmpty(), "no layers")
+        val roads = tile.layers.firstOrNull { it.name == "transportation" }
+        assertTrue(roads != null, "layers: ${tile.layers.map { it.name }}")
+        assertTrue(roads.features.any { it.tags.containsKey("class") }, "no road carries a class")
+        assertTrue(roads.features.any { it.geometry.any { line -> line.size > 1 } }, "no line geometry")
+    }
+
+    @Test
     fun truncatedTileThrows() {
         assertTrue(runCatching { Mvt.decode(byteArrayOf(0x1A, 0x7F)) }.isFailure)
     }
